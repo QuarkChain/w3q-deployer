@@ -31,7 +31,7 @@ const recursiveUpload = (path, basePath, fileContract) => {
 };
 
 const uploadFile = (file, fileName, fileSize, fileContract) => {
-  fs.readFile(file, 'utf-8', async function(err, content) {
+  fs.readFile(file, async function(err, content) {
     if (err) {
       console.log(err);
       return;
@@ -42,15 +42,20 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
     }
 
     const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
-    const hexData = '0x' + Buffer.from(content, 'ascii').toString('hex');
+    const hexData = '0x' + content.toString('hex');
     const options = {
       nonce: nonce++,
       gasLimit: 30000000,
       value: ethers.utils.parseEther(cost.toString())
     };
-    const tx = await fileContract.write(hexName, hexData, options);
-    console.log(fileName);
-    console.log(tx.hash);
+    try {
+      const tx = await fileContract.write(hexName, hexData, options);
+      console.log(fileName);
+      console.log(tx.hash);
+
+    } catch(err) {
+      console.error(err.reason);
+    }
   });
 };
 
