@@ -1,5 +1,14 @@
 #!/usr/bin/env node
-const { deploy } = require("./index");
-const [,, ...args] = process.argv;
+const args = require('minimist')(
+  process.argv.slice(2),
+  {
+    string: ['_', 'privateKey']
+  }
+);
+const { create, deploy } = require("./index");
 
-deploy(args[0], args[1], args[2]);
+if (args.create) {
+  create(args.privateKey);
+} else {
+  deploy(args._[0], args._[1], args._[2]);
+}

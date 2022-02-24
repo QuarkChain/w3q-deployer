@@ -7,7 +7,13 @@ const wnsAbi = [
 const fileAbi = [
   "function write(bytes memory filename, bytes memory data) public payable"
 ];
-const wnsContract = new ethers.Contract("0x5095135E861845dee965141fEA9061F38C85c699", wnsAbi, provider);
+const factoryAbi = [
+  "event FlatDirectoryCreated(address)",
+  "function create() public returns (address)"
+];
+const WNS_ADDRESS = "0x5095135E861845dee965141fEA9061F38C85c699";
+const FACTORY_ADDRESS = "0x7906895532c9Fc4D423f3d5E78672CAd3EB44F91";
+const wnsContract = new ethers.Contract(WNS_ADDRESS, wnsAbi, provider);
 let nonce;
 let wallet;
 
@@ -52,6 +58,16 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
       const tx = await fileContract.write(hexName, hexData, options);
       console.log(fileName);
       console.log(tx.hash);
+      let txReceipt;
+      while(!txReceipt) {
+        txReceipt = await isTransactionMined(tx.hash);
+        await sleep(5000);
+      }
+      if (txReceipt.status) {
+        console.log(`Files uploaded!`);
+      } else {
+        console.error(`Transaction failed. Please check if the caller is the ower of the contract.`);
+      }
     } catch(err) {
       console.error(err.reason);
     }
@@ -85,4 +101,37 @@ const deploy = async (path, domain, key) => {
   }
 };
 
+const isTransactionMined = async (transactionHash) => {
+  const txReceipt = await provider.getTransactionReceipt(transactionHash);
+  if (txReceipt && txReceipt.blockNumber) {
+    return txReceipt;
+  }
+}
+
+const sleep = (ms) => {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+const createDirectory = async (key) => {
+  const wallet = new ethers.Wallet(key, provider);
+  const factoryContract = new ethers.Contract(FACTORY_ADDRESS, factoryAbi, wallet);
+  const tx = await factoryContract.create();
+  console.log(`Transaction: ${ tx.hash }`);
+  let txReceipt;
+  while(!txReceipt) {
+    txReceipt = await isTransactionMined(tx.hash);
+    await sleep(5000);
+  }
+  if (txReceipt.status) {
+    let iface = new ethers.utils.Interface(factoryAbi);
+    let log = iface.parseLog(txReceipt.logs[0]); 
+    console.log(`FlatDirectory Address: ${log.args[0]}`);
+  } else {
+    console.error(`Transaction Failed!`);
+  }
+};
+
 module.exports.deploy = deploy;
+module.exports.create = createDirectory;
