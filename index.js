@@ -52,7 +52,6 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
       const tx = await fileContract.write(hexName, hexData, options);
       console.log(fileName);
       console.log(tx.hash);
-
     } catch(err) {
       console.error(err.reason);
     }
@@ -61,8 +60,15 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
 
 const deploy = async (path, domain, key) => {
   const wallet = new ethers.Wallet(key, provider);
-  const name = '0x' + Buffer.from(domain, 'utf8').toString('hex');
-  const pointer = await wnsContract.pointerOf(name);
+  const ethAddrReg = /^0x[0-9a-fA-F]{40}$/;
+
+  let pointer;
+  if (ethAddrReg.test(domain)) {
+    pointer = domain;
+  } else {
+    const name = '0x' + Buffer.from(domain, 'utf8').toString('hex');
+    pointer = await wnsContract.pointerOf(name);
+  }
   if (parseInt(pointer) > 0) {
     nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
