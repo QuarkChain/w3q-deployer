@@ -5,7 +5,9 @@ const wnsAbi = [
   "function pointerOf(bytes memory name) public view returns (address)",
 ];
 const fileAbi = [
-  "function write(bytes memory filename, bytes memory data) public payable"
+  "function write(bytes memory filename, bytes memory data) public payable",
+  "function writeChunk(bytes memory name, uint256 chunkId, bytes memory data) public payable",
+  "function readChunk(bytes memory name, uint256 chunkId) public view returns (bytes memory, bool)"
 ];
 const factoryAbi = [
   "event FlatDirectoryCreated(address)",
@@ -42,34 +44,72 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
       console.log(err);
       return;
     }
-    let cost = 0;
-    if(fileSize > 24 * 1024) {
-      cost  = fileSize / 1024 / 24;
-    }
+    // Data need to be sliced if file > 500K
+    if (fileSize > 500 * 1024) {
+      const chunkSize = Math.ceil(fileSize / (500 * 1024));
+      const chunks = bufferChunk(content, chunkSize);
+      fileSize = fileSize / chunkSize;
+      chunks.forEach(async (chunk, index) => {
+        let cost = 0;
+        if(fileSize > 24 * 1024) {
+          cost  = fileSize / 1024 / 24;
+        }
 
-    const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
-    const hexData = '0x' + content.toString('hex');
-    const options = {
-      nonce: nonce++,
-      gasLimit: 30000000,
-      value: ethers.utils.parseEther(cost.toString())
-    };
-    try {
-      const tx = await fileContract.write(hexName, hexData, options);
-      console.log(fileName);
-      console.log(tx.hash);
-      let txReceipt;
-      while(!txReceipt) {
-        txReceipt = await isTransactionMined(tx.hash);
-        await sleep(5000);
+        const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
+        const hexData = '0x' + chunk.toString('hex');
+        const options = {
+          nonce: nonce++,
+          gasLimit: 30000000,
+          value: ethers.utils.parseEther(cost.toString())
+        };
+        try {
+          const tx = await fileContract.writeChunk(hexName, index, hexData, options);
+          console.log(`File: ${fileName}, chunkId: ${index}`);
+          console.log(`Transaction Id: ${tx.hash}`);
+          let txReceipt;
+          while(!txReceipt) {
+            txReceipt = await isTransactionMined(tx.hash);
+            await sleep(5000);
+          }
+          if (txReceipt.status) {
+            console.log(`File ${fileName} chunkId: ${index} uploaded!`);
+          } else {
+            console.error(`Transaction failed. Please check if the caller is the ower of the contract.`);
+          }
+        } catch(err) {
+          console.error(err.reason);
+        }
+      });
+    } else {
+      let cost = 0;
+      if(fileSize > 24 * 1024) {
+        cost  = fileSize / 1024 / 24;
       }
-      if (txReceipt.status) {
-        console.log(`Files uploaded!`);
-      } else {
-        console.error(`Transaction failed. Please check if the caller is the ower of the contract.`);
+
+      const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
+      const hexData = '0x' + content.toString('hex');
+      const options = {
+        nonce: nonce++,
+        gasLimit: 30000000,
+        value: ethers.utils.parseEther(cost.toString())
+      };
+      try {
+        const tx = await fileContract.write(hexName, hexData, options);
+        console.log(fileName);
+        console.log(`Transaction Id: ${tx.hash}`);
+        let txReceipt;
+        while(!txReceipt) {
+          txReceipt = await isTransactionMined(tx.hash);
+          await sleep(5000);
+        }
+        if (txReceipt.status) {
+          console.log(`File ${fileName} uploaded!`);
+        } else {
+          console.error(`Transaction failed. Please check if the caller is the ower of the contract.`);
+        }
+      } catch(err) {
+        console.error(err.reason);
       }
-    } catch(err) {
-      console.error(err.reason);
     }
   });
 };
@@ -112,6 +152,18 @@ const sleep = (ms) => {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+const bufferChunk = (buffer, chunkSize) => {
+	let i = 0;
+	let result = [];
+	const len = buffer.length;
+  const chunkLength = Math.ceil(len / chunkSize);
+	while (i < len) {
+		result.push(buffer.slice(i, i += chunkLength));
+	}
+
+	return result;
 }
 
 const createDirectory = async (key) => {

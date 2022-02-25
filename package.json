@@ -1,6 +1,6 @@
 {
   "name": "w3q-deployer",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A tool to make files easy to deploy on w3q.",
   "main": "index.js",
   "scripts": {
