@@ -6,8 +6,10 @@ const wnsAbi = [
 ];
 const fileAbi = [
   "function write(bytes memory filename, bytes memory data) public payable",
+  "function read(bytes memory name) public view returns (bytes memory, bool)",
   "function writeChunk(bytes memory name, uint256 chunkId, bytes memory data) public payable",
-  "function readChunk(bytes memory name, uint256 chunkId) public view returns (bytes memory, bool)"
+  "function readChunk(bytes memory name, uint256 chunkId) public view returns (bytes memory, bool)",
+  "function files(bytes memory filename) public view returns (bytes memory)"
 ];
 const factoryAbi = [
   "event FlatDirectoryCreated(address)",
@@ -57,27 +59,32 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
 
         const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
         const hexData = '0x' + chunk.toString('hex');
-        const options = {
-          nonce: nonce++,
-          gasLimit: 30000000,
-          value: ethers.utils.parseEther(cost.toString())
-        };
-        try {
-          const tx = await fileContract.writeChunk(hexName, index, hexData, options);
-          console.log(`File: ${fileName}, chunkId: ${index}`);
-          console.log(`Transaction Id: ${tx.hash}`);
-          let txReceipt;
-          while(!txReceipt) {
-            txReceipt = await isTransactionMined(tx.hash);
-            await sleep(5000);
+        const [historyData, isFound] = await fileContract.readChunk(hexName, index);
+        if (isFound && hexData === historyData) {
+          console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
+        } else {
+          const options = {
+            nonce: nonce++,
+            gasLimit: 30000000,
+            value: ethers.utils.parseEther(cost.toString())
+          };
+          try {
+            const tx = await fileContract.writeChunk(hexName, index, hexData, options);
+            console.log(`File: ${fileName}, chunkId: ${index}`);
+            console.log(`Transaction Id: ${tx.hash}`);
+            let txReceipt;
+            while(!txReceipt) {
+              txReceipt = await isTransactionMined(tx.hash);
+              await sleep(5000);
+            }
+            if (txReceipt.status) {
+              console.log(`File ${fileName} chunkId: ${index} uploaded!`);
+            } else {
+              console.error(`ERROR: transaction failed. Please check if the caller is the ower of the contract.`);
+            }
+          } catch(err) {
+            console.error(err.reason);
           }
-          if (txReceipt.status) {
-            console.log(`File ${fileName} chunkId: ${index} uploaded!`);
-          } else {
-            console.error(`Transaction failed. Please check if the caller is the ower of the contract.`);
-          }
-        } catch(err) {
-          console.error(err.reason);
         }
       });
     } else {
@@ -88,27 +95,39 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
 
       const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
       const hexData = '0x' + content.toString('hex');
-      const options = {
-        nonce: nonce++,
-        gasLimit: 30000000,
-        value: ethers.utils.parseEther(cost.toString())
-      };
-      try {
-        const tx = await fileContract.write(hexName, hexData, options);
-        console.log(fileName);
-        console.log(`Transaction Id: ${tx.hash}`);
-        let txReceipt;
-        while(!txReceipt) {
-          txReceipt = await isTransactionMined(tx.hash);
-          await sleep(5000);
+      let [historyData, isFound] = await fileContract.read(hexName);
+      if (hexData !== historyData) {
+        try {
+          historyData = await fileContract.files(hexName); //support old version of FlatDirectory contract
+        } catch(err) {
+          // Doesn't support the files(name) method.
         }
-        if (txReceipt.status) {
-          console.log(`File ${fileName} uploaded!`);
-        } else {
-          console.error(`Transaction failed. Please check if the caller is the ower of the contract.`);
+      }
+      if (hexData === historyData) {
+        console.log(`${fileName}: The data is not changed.`);
+      } else {
+        const options = {
+          nonce: nonce++,
+          gasLimit: 30000000,
+          value: ethers.utils.parseEther(cost.toString())
+        };
+        try {
+          const tx = await fileContract.write(hexName, hexData, options);
+          console.log(fileName);
+          console.log(`Transaction Id: ${tx.hash}`);
+          let txReceipt;
+          while(!txReceipt) {
+            txReceipt = await isTransactionMined(tx.hash);
+            await sleep(5000);
+          }
+          if (txReceipt.status) {
+            console.log(`File ${fileName} uploaded!`);
+          } else {
+            console.error(`ERROR: transaction failed. Please check if the caller is the ower of the contract.`);
+          }
+        } catch(err) {
+          console.error(err.reason);
         }
-      } catch(err) {
-        console.error(err.reason);
       }
     }
   });
@@ -137,7 +156,7 @@ const deploy = async (path, domain, key) => {
       }
     });
   } else {
-    console.log(`${domain}.w3q doesn't exist`);
+    console.log(`ERROR: ${domain}.w3q doesn't exist`);
   }
 };
 
@@ -155,15 +174,15 @@ const sleep = (ms) => {
 }
 
 const bufferChunk = (buffer, chunkSize) => {
-	let i = 0;
-	let result = [];
-	const len = buffer.length;
+  let i = 0;
+  let result = [];
+  const len = buffer.length;
   const chunkLength = Math.ceil(len / chunkSize);
-	while (i < len) {
-		result.push(buffer.slice(i, i += chunkLength));
-	}
+  while (i < len) {
+    result.push(buffer.slice(i, i += chunkLength));
+  }
 
-	return result;
+  return result;
 }
 
 const createDirectory = async (key) => {
@@ -181,7 +200,7 @@ const createDirectory = async (key) => {
     let log = iface.parseLog(txReceipt.logs[0]); 
     console.log(`FlatDirectory Address: ${log.args[0]}`);
   } else {
-    console.error(`Transaction Failed!`);
+    console.error(`ERROR: transaction failed!`);
   }
 };
 
