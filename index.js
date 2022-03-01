@@ -9,7 +9,8 @@ const fileAbi = [
   "function read(bytes memory name) public view returns (bytes memory, bool)",
   "function writeChunk(bytes memory name, uint256 chunkId, bytes memory data) public payable",
   "function readChunk(bytes memory name, uint256 chunkId) public view returns (bytes memory, bool)",
-  "function files(bytes memory filename) public view returns (bytes memory)"
+  "function files(bytes memory filename) public view returns (bytes memory)",
+  "function refund() public"
 ];
 const factoryAbi = [
   "event FlatDirectoryCreated(address)",
@@ -46,12 +47,14 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
       console.log(err);
       return;
     }
-    // Data need to be sliced if file > 500K
-    if (fileSize > 500 * 1024) {
-      const chunkSize = Math.ceil(fileSize / (500 * 1024));
+    // Data need to be sliced if file > 475K
+    if (fileSize > 475 * 1024) {
+      const chunkSize = Math.ceil(fileSize / (475 * 1024));
       const chunks = bufferChunk(content, chunkSize);
       fileSize = fileSize / chunkSize;
-      chunks.forEach(async (chunk, index) => {
+      for (const index in chunks) {
+        const chunk = chunks[index];
+
         let cost = 0;
         if(fileSize > 24 * 1024) {
           cost  = fileSize / 1024 / 24;
@@ -80,13 +83,13 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
             if (txReceipt.status) {
               console.log(`File ${fileName} chunkId: ${index} uploaded!`);
             } else {
-              console.error(`ERROR: transaction failed. Please check if the caller is the ower of the contract.`);
+              console.error(`ERROR: transaction failed.`);
             }
           } catch(err) {
             console.error(err.reason);
           }
         }
-      });
+      }
     } else {
       let cost = 0;
       if(fileSize > 24 * 1024) {
@@ -123,7 +126,7 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
           if (txReceipt.status) {
             console.log(`File ${fileName} uploaded!`);
           } else {
-            console.error(`ERROR: transaction failed. Please check if the caller is the ower of the contract.`);
+            console.error(`ERROR: transaction failed.`);
           }
         } catch(err) {
           console.error(err.reason);
@@ -204,5 +207,37 @@ const createDirectory = async (key) => {
   }
 };
 
+const refund = async (domain, key) => {
+  const wallet = new ethers.Wallet(key, provider);
+  const ethAddrReg = /^0x[0-9a-fA-F]{40}$/;
+
+  let pointer;
+  if (ethAddrReg.test(domain)) {
+    pointer = domain;
+  } else {
+    const name = '0x' + Buffer.from(domain, 'utf8').toString('hex');
+    pointer = await wnsContract.pointerOf(name);
+  }
+  if (parseInt(pointer) > 0) {
+    nonce = await wallet.getTransactionCount("pending");
+    const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
+    const tx = await fileContract.refund();
+    console.log(`Transaction: ${ tx.hash }`);
+    let txReceipt;
+    while(!txReceipt) {
+      txReceipt = await isTransactionMined(tx.hash);
+      await sleep(5000);
+    }
+    if (txReceipt.status) {
+      console.log(`Refund succeeds`);
+    } else {
+      console.error(`ERROR: transaction failed!`);
+    }
+  } else {
+    console.log(`ERROR: ${domain}.w3q doesn't exist`);
+  }
+};
+
 module.exports.deploy = deploy;
 module.exports.create = createDirectory;
+module.exports.refund = refund;
