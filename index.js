@@ -274,4 +274,4 @@ const setDefault = async (domain, filename, key) => {
 module.exports.deploy = deploy;
 module.exports.create = createDirectory;
 module.exports.refund = refund;
-module.epxorts.setDefault = setDefault;
+module.exports.setDefault = setDefault;

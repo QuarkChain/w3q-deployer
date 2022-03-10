@@ -26,5 +26,16 @@ w3q-deploy --create --privateKey [private-key]
 w3q-deploy --create --privateKey 0x32...
 ```
 
+### Set FlatDirectory Default Entrance
+```
+w3q-deploy --default --address [domain/address] --name [fileName] --privateKey [private-key]
+
+```
+
+#### Example
+```
+w3q-deploy --default --address home --name index.html --privateKey 0x32...
+```
+
 ### Repo
 [Github Repo](https://github.com/QuarkChain/w3q-deployer)

@@ -12,7 +12,7 @@ if (args.create) {
 } else if(args.refund) {
   refund(args.address, args.privateKey);
 } else if(args.default) {
-  setDefault(args.address, args.fileName, args.privateKey);
+  setDefault(args.address, args.file, args.privateKey);
 } else {
   deploy(args._[0], args._[1], args._[2]);
 }
