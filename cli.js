@@ -14,5 +14,9 @@ if (args.create) {
 } else if(args.default) {
   setDefault(args.address, args.file, args.privateKey);
 } else {
-  deploy(args._[0], args._[1], args._[2]);
+  if (args.privateKey) {
+    deploy(args._[0], args._[1], args.privateKey);
+  } else {
+    deploy(args._[0], args._[1], args._[2]);
+  }
 }
