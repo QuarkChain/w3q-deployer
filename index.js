@@ -10,6 +10,7 @@ const fileAbi = [
   "function writeChunk(bytes memory name, uint256 chunkId, bytes memory data) public payable",
   "function readChunk(bytes memory name, uint256 chunkId) public view returns (bytes memory, bool)",
   "function files(bytes memory filename) public view returns (bytes memory)",
+  "function setDefault(bytes memory _defaultFile) public",
   "function refund() public"
 ];
 const factoryAbi = [
@@ -238,6 +239,39 @@ const refund = async (domain, key) => {
   }
 };
 
+const setDefault = async (domain, filename, key) => {
+  const wallet = new ethers.Wallet(key, provider);
+  const ethAddrReg = /^0x[0-9a-fA-F]{40}$/;
+
+  let pointer;
+  if (ethAddrReg.test(domain)) {
+    pointer = domain;
+  } else {
+    const name = '0x' + Buffer.from(domain, 'utf8').toString('hex');
+    pointer = await wnsContract.pointerOf(name);
+  }
+  if (parseInt(pointer) > 0) {
+    nonce = await wallet.getTransactionCount("pending");
+    const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
+    const defaultFile = '0x' + Buffer.from(filename, 'utf8').toString('hex');
+    const tx = await fileContract.setDefault(defaultFile);
+    console.log(`Transaction: ${ tx.hash }`);
+    let txReceipt;
+    while(!txReceipt) {
+      txReceipt = await isTransactionMined(tx.hash);
+      await sleep(5000);
+    }
+    if (txReceipt.status) {
+      console.log(`Set succeeds`);
+    } else {
+      console.error(`ERROR: transaction failed!`);
+    }
+  } else {
+    console.log(`ERROR: ${domain}.w3q doesn't exist`);
+  }
+};
+
 module.exports.deploy = deploy;
 module.exports.create = createDirectory;
 module.exports.refund = refund;
+module.exports.setDefault = setDefault;
