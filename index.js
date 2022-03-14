@@ -1,8 +1,14 @@
 const fs = require('fs');
 const { ethers } = require("ethers");
-const provider = new ethers.providers.JsonRpcProvider("https://testnet.web3q.io:8545");
+const { normalize } = require('eth-ens-namehash');
+const sha3 = require('js-sha3').keccak_256;
+
 const wnsAbi = [
   "function pointerOf(bytes memory name) public view returns (address)",
+  "function resolver(bytes32 node) public view returns (address)",
+];
+const resolverAbi = [
+  "function webHandler(bytes32 node) external view returns (address)",
 ];
 const fileAbi = [
   "function write(bytes memory filename, bytes memory data) public payable",
@@ -17,13 +23,82 @@ const factoryAbi = [
   "event FlatDirectoryCreated(address)",
   "function create() public returns (address)"
 ];
-const WNS_ADDRESS = "0x5095135E861845dee965141fEA9061F38C85c699";
-const FACTORY_ADDRESS = "0x7906895532c9Fc4D423f3d5E78672CAd3EB44F91";
-const wnsContract = new ethers.Contract(WNS_ADDRESS, wnsAbi, provider);
-let nonce;
-let wallet;
 
-const recursiveUpload = (path, basePath, fileContract) => {
+const MAINNET_NETWORK = "mainnet";
+const TESTNET_NETWORK = "testnet";
+const GALILEO_NETWORK = "galileo";
+
+const MAINNET_CHAIN_ID = 333;
+const TESTNET_CHAIN_ID = 3333;
+const GALILEO_CHAIN_ID = 3334;
+
+const PROVIDER_URLS = {
+  [MAINNET_CHAIN_ID]: '',
+  [TESTNET_CHAIN_ID]: 'https://testnet.web3q.io:8545',
+  [GALILEO_CHAIN_ID]: 'https://galileo.web3q.io:8545',
+}
+const W3NS_ADDRESS = {
+  [MAINNET_CHAIN_ID]: '',
+  [TESTNET_CHAIN_ID]: '0x5095135E861845dee965141fEA9061F38C85c699',
+  [GALILEO_CHAIN_ID]: '0xD379B91ac6a93AF106802EB076d16A54E3519CED',
+}
+const FACTORY_ADDRESS = {
+  [MAINNET_CHAIN_ID]: '',
+  [TESTNET_CHAIN_ID]: '0x7906895532c9Fc4D423f3d5E78672CAd3EB44F91',
+  [GALILEO_CHAIN_ID]: '0x67384A0B6e13CeA90150Bf958F2B13929C429CC5',
+}
+
+
+let nonce;
+
+function namehash(inputName) {
+  let node = ''
+  for (let i = 0; i < 32; i++) {
+    node += '00'
+  }
+
+  if (inputName) {
+    const labels = inputName.split('.');
+    for (let i = labels.length - 1; i >= 0; i--) {
+      let normalisedLabel = normalize(labels[i])
+      let labelSha = sha3(normalisedLabel)
+      node = sha3(new Buffer(node + labelSha, 'hex'))
+    }
+  }
+
+  return '0x' + node
+}
+
+function getNetWorkId(network) {
+  let chainId = GALILEO_CHAIN_ID;
+  if (network === MAINNET_NETWORK) {
+    chainId = MAINNET_CHAIN_ID;
+  } else if (network === TESTNET_NETWORK) {
+    chainId = TESTNET_CHAIN_ID;
+  }
+  return chainId;
+}
+
+async function getWebHandler(domain, network, chainId, provider) {
+  const ethAddrReg = /^0x[0-9a-fA-F]{40}$/;
+  let webHandler;
+  if (ethAddrReg.test(domain)) {
+    webHandler = domain;
+  } else if (network === TESTNET_NETWORK) {
+    const name = '0x' + Buffer.from(domain, 'utf8').toString('hex');
+    const wnsContract = new ethers.Contract(W3NS_ADDRESS[chainId], wnsAbi, provider);
+    webHandler = await wnsContract.pointerOf(name);
+  } else {
+    const nameHash = namehash(domain + ".w3q");
+    const wnsContract = new ethers.Contract(W3NS_ADDRESS[chainId], wnsAbi, provider);
+    const resolver = await wnsContract.resolver(nameHash);
+    const resolverContract = new ethers.Contract(resolver, resolverAbi, provider);
+    webHandler = await resolverContract.webHandler(nameHash);
+  }
+  return webHandler;
+}
+
+const recursiveUpload = (provider, path, basePath, fileContract) => {
   fs.readdir(path, (err, files) => {
     files.forEach(file => {
       fs.stat(`${path}/${file}`, (err, fileStat) => {
@@ -31,19 +106,19 @@ const recursiveUpload = (path, basePath, fileContract) => {
           console.log(err);
           return;
         }
-        if(fileStat.isFile()) {
-          uploadFile(`${path}/${file}`, `${basePath}${file}`, fileStat.size, fileContract);
+        if (fileStat.isFile()) {
+          uploadFile(provider, `${path}/${file}`, `${basePath}${file}`, fileStat.size, fileContract);
         }
-        if(fileStat.isDirectory()) {
-          recursiveUpload(`${path}/${file}`, `${basePath}${file}/`, fileContract);
+        if (fileStat.isDirectory()) {
+          recursiveUpload(provider, `${path}/${file}`, `${basePath}${file}/`, fileContract);
         }
       });
     });
   });
 };
 
-const uploadFile = (file, fileName, fileSize, fileContract) => {
-  fs.readFile(file, async function(err, content) {
+const uploadFile = (provider, file, fileName, fileSize, fileContract) => {
+  fs.readFile(file, async function (err, content) {
     if (err) {
       console.log(err);
       return;
@@ -57,8 +132,8 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
         const chunk = chunks[index];
 
         let cost = 0;
-        if(fileSize > 24 * 1024) {
-          cost  = fileSize / 1024 / 24;
+        if (fileSize > 24 * 1024) {
+          cost = fileSize / 1024 / 24;
         }
 
         const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
@@ -77,8 +152,8 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
             console.log(`File: ${fileName}, chunkId: ${index}`);
             console.log(`Transaction Id: ${tx.hash}`);
             let txReceipt;
-            while(!txReceipt) {
-              txReceipt = await isTransactionMined(tx.hash);
+            while (!txReceipt) {
+              txReceipt = await isTransactionMined(provider, tx.hash);
               await sleep(5000);
             }
             if (txReceipt.status) {
@@ -86,15 +161,15 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
             } else {
               console.error(`ERROR: transaction failed.`);
             }
-          } catch(err) {
+          } catch (err) {
             console.error(err.reason);
           }
         }
       }
     } else {
       let cost = 0;
-      if(fileSize > 24 * 1024) {
-        cost  = fileSize / 1024 / 24;
+      if (fileSize > 24 * 1024) {
+        cost = fileSize / 1024 / 24;
       }
 
       const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
@@ -103,7 +178,7 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
       if (hexData !== historyData) {
         try {
           historyData = await fileContract.files(hexName); //support old version of FlatDirectory contract
-        } catch(err) {
+        } catch (err) {
           // Doesn't support the files(name) method.
         }
       }
@@ -120,8 +195,8 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
           console.log(fileName);
           console.log(`Transaction Id: ${tx.hash}`);
           let txReceipt;
-          while(!txReceipt) {
-            txReceipt = await isTransactionMined(tx.hash);
+          while (!txReceipt) {
+            txReceipt = await isTransactionMined(provider, tx.hash);
             await sleep(5000);
           }
           if (txReceipt.status) {
@@ -129,7 +204,7 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
           } else {
             console.error(`ERROR: transaction failed.`);
           }
-        } catch(err) {
+        } catch (err) {
           console.error(err.reason);
         }
       }
@@ -137,26 +212,21 @@ const uploadFile = (file, fileName, fileSize, fileContract) => {
   });
 };
 
-const deploy = async (path, domain, key) => {
+const deploy = async (path, domain, key, network) => {
+  const chainId = getNetWorkId(network);
+  const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
   const wallet = new ethers.Wallet(key, provider);
-  const ethAddrReg = /^0x[0-9a-fA-F]{40}$/;
+  const pointer = await getWebHandler(domain, network, chainId, provider);
 
-  let pointer;
-  if (ethAddrReg.test(domain)) {
-    pointer = domain;
-  } else {
-    const name = '0x' + Buffer.from(domain, 'utf8').toString('hex');
-    pointer = await wnsContract.pointerOf(name);
-  }
   if (parseInt(pointer) > 0) {
     nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     fs.stat(path, (err, fileStat) => {
-      if(fileStat.isDirectory()) {
-        recursiveUpload(path, '', fileContract);
+      if (fileStat.isDirectory()) {
+        recursiveUpload(provider, path, '', fileContract);
       }
-      if(fileStat.isFile()) {
-        uploadFile(path, path, fileStat.size, fileContract);
+      if (fileStat.isFile()) {
+        uploadFile(provider, path, path, fileStat.size, fileContract);
       }
     });
   } else {
@@ -164,7 +234,7 @@ const deploy = async (path, domain, key) => {
   }
 };
 
-const isTransactionMined = async (transactionHash) => {
+const isTransactionMined = async (provider, transactionHash) => {
   const txReceipt = await provider.getTransactionReceipt(transactionHash);
   if (txReceipt && txReceipt.blockNumber) {
     return txReceipt;
@@ -189,44 +259,41 @@ const bufferChunk = (buffer, chunkSize) => {
   return result;
 }
 
-const createDirectory = async (key) => {
+const createDirectory = async (key, network) => {
+  const chainId = getNetWorkId(network);
+  const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
   const wallet = new ethers.Wallet(key, provider);
-  const factoryContract = new ethers.Contract(FACTORY_ADDRESS, factoryAbi, wallet);
+  const factoryContract = new ethers.Contract(FACTORY_ADDRESS[chainId], factoryAbi, wallet);
   const tx = await factoryContract.create();
-  console.log(`Transaction: ${ tx.hash }`);
+  console.log(`Transaction: ${tx.hash}`);
   let txReceipt;
-  while(!txReceipt) {
-    txReceipt = await isTransactionMined(tx.hash);
+  while (!txReceipt) {
+    txReceipt = await isTransactionMined(provider, tx.hash);
     await sleep(5000);
   }
   if (txReceipt.status) {
     let iface = new ethers.utils.Interface(factoryAbi);
-    let log = iface.parseLog(txReceipt.logs[0]); 
+    let log = iface.parseLog(txReceipt.logs[0]);
     console.log(`FlatDirectory Address: ${log.args[0]}`);
   } else {
     console.error(`ERROR: transaction failed!`);
   }
 };
 
-const refund = async (domain, key) => {
+const refund = async (domain, key, network) => {
+  const chainId = getNetWorkId(network);
+  const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
   const wallet = new ethers.Wallet(key, provider);
-  const ethAddrReg = /^0x[0-9a-fA-F]{40}$/;
+  const pointer = await getWebHandler(domain, network, chainId, provider);
 
-  let pointer;
-  if (ethAddrReg.test(domain)) {
-    pointer = domain;
-  } else {
-    const name = '0x' + Buffer.from(domain, 'utf8').toString('hex');
-    pointer = await wnsContract.pointerOf(name);
-  }
   if (parseInt(pointer) > 0) {
     nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     const tx = await fileContract.refund();
-    console.log(`Transaction: ${ tx.hash }`);
+    console.log(`Transaction: ${tx.hash}`);
     let txReceipt;
-    while(!txReceipt) {
-      txReceipt = await isTransactionMined(tx.hash);
+    while (!txReceipt) {
+      txReceipt = await isTransactionMined(provider, tx.hash);
       await sleep(5000);
     }
     if (txReceipt.status) {
@@ -239,26 +306,20 @@ const refund = async (domain, key) => {
   }
 };
 
-const setDefault = async (domain, filename, key) => {
+const setDefault = async (domain, filename, key, network) => {
+  const chainId = getNetWorkId(network);
+  const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
   const wallet = new ethers.Wallet(key, provider);
-  const ethAddrReg = /^0x[0-9a-fA-F]{40}$/;
-
-  let pointer;
-  if (ethAddrReg.test(domain)) {
-    pointer = domain;
-  } else {
-    const name = '0x' + Buffer.from(domain, 'utf8').toString('hex');
-    pointer = await wnsContract.pointerOf(name);
-  }
+  const pointer = await getWebHandler(domain, network, chainId, provider);
   if (parseInt(pointer) > 0) {
     nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     const defaultFile = '0x' + Buffer.from(filename, 'utf8').toString('hex');
     const tx = await fileContract.setDefault(defaultFile);
-    console.log(`Transaction: ${ tx.hash }`);
+    console.log(`Transaction: ${tx.hash}`);
     let txReceipt;
-    while(!txReceipt) {
-      txReceipt = await isTransactionMined(tx.hash);
+    while (!txReceipt) {
+      txReceipt = await isTransactionMined(provider, tx.hash);
       await sleep(5000);
     }
     if (txReceipt.status) {
