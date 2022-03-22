@@ -2,6 +2,7 @@ const fs = require('fs');
 const { ethers } = require("ethers");
 const { normalize } = require('eth-ens-namehash');
 const sha3 = require('js-sha3').keccak_256;
+const JTPool = require('./JTPool');
 
 const wnsAbi = [
   "function pointerOf(bytes memory name) public view returns (address)",
@@ -48,7 +49,7 @@ const FACTORY_ADDRESS = {
   [GALILEO_CHAIN_ID]: '0x67384A0B6e13CeA90150Bf958F2B13929C429CC5',
 }
 
-
+let pools;
 let nonce;
 
 function namehash(inputName) {
@@ -98,15 +99,14 @@ async function getWebHandler(domain, network, chainId, provider) {
   return webHandler;
 }
 
-const recursiveUpload = async (provider, path, basePath, fileContract) => {
+const recursiveUpload = (path, basePath) => {
   const files = fs.readdirSync(path);
   for (let file of files) {
     const fileStat = fs.statSync(`${path}/${file}`);
-    if (fileStat.isFile()) {
-      await uploadFile(provider, `${path}/${file}`, `${basePath}${file}`, fileStat.size, fileContract);
-    }
     if (fileStat.isDirectory()) {
-      await recursiveUpload(provider, `${path}/${file}`, `${basePath}${file}/`, fileContract);
+      recursiveUpload(`${path}/${file}`, `${basePath}${file}/`);
+    } else {
+      pools.push({path: `${path}/${file}`, name: `${basePath}${file}`, size: fileStat.size});
     }
   }
 };
@@ -137,22 +137,19 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
           gasLimit: 30000000,
           value: ethers.utils.parseEther(cost.toString())
         };
-        try {
-          const tx = await fileContract.writeChunk(hexName, index, hexData, options);
-          console.log(`File: ${fileName}, chunkId: ${index}`);
-          console.log(`Transaction Id: ${tx.hash}`);
-          let txReceipt;
-          while (!txReceipt) {
-            txReceipt = await isTransactionMined(provider, tx.hash);
-            await sleep(5000);
-          }
-          if (txReceipt.status) {
-            console.log(`File ${fileName} chunkId: ${index} uploaded!`);
-          } else {
-            console.error(`ERROR: transaction failed.`);
-          }
-        } catch (err) {
-          console.error(err.reason);
+
+        const tx = await fileContract.writeChunk(hexName, index, hexData, options);
+        console.log(`File: ${fileName}, chunkId: ${index}`);
+        console.log(`Transaction Id: ${tx.hash}`);
+        let txReceipt;
+        while (!txReceipt) {
+          txReceipt = await isTransactionMined(provider, tx.hash);
+          await sleep(5000);
+        }
+        if (txReceipt.status) {
+          console.log(`File ${fileName} chunkId: ${index} uploaded!`);
+        } else {
+          console.error(`ERROR: transaction failed.`);
         }
       }
     }
@@ -180,22 +177,19 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
         gasLimit: 30000000,
         value: ethers.utils.parseEther(cost.toString())
       };
-      try {
-        const tx = await fileContract.write(hexName, hexData, options);
-        console.log(fileName);
-        console.log(`Transaction Id: ${tx.hash}`);
-        let txReceipt;
-        while (!txReceipt) {
-          txReceipt = await isTransactionMined(provider, tx.hash);
-          await sleep(5000);
-        }
-        if (txReceipt.status) {
-          console.log(`File ${fileName} uploaded!`);
-        } else {
-          console.error(`ERROR: transaction failed.`);
-        }
-      } catch (err) {
-        console.error(err.reason);
+
+      const tx = await fileContract.write(hexName, hexData, options);
+      console.log(fileName);
+      console.log(`Transaction Id: ${tx.hash}`);
+      let txReceipt;
+      while (!txReceipt) {
+        txReceipt = await isTransactionMined(provider, tx.hash);
+        await sleep(5000);
+      }
+      if (txReceipt.status) {
+        console.log(`File ${fileName} uploaded!`);
+      } else {
+        console.error(`ERROR: transaction failed.`);
       }
     }
   }
@@ -210,14 +204,26 @@ const deploy = async (path, domain, key, network) => {
   if (parseInt(pointer) > 0) {
     nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
-    fs.stat(path, (err, fileStat) => {
-      if (fileStat.isDirectory()) {
-        recursiveUpload(provider, path, '', fileContract);
-      }
-      if (fileStat.isFile()) {
-        uploadFile(provider, path, path, fileStat.size, fileContract);
-      }
-    });
+    const fileStat = fs.statSync(path);
+    if (fileStat.isFile()) {
+      await uploadFile(provider, path, path, fileStat.size, fileContract);
+      return;
+    }
+
+    pools = [];
+    recursiveUpload(path, '');
+    const pool = new JTPool(15);
+    for(let file of pools){
+      pool.addTask(async function (callback) {
+        try {
+          await uploadFile(provider, file.path, file.name, file.size, fileContract);
+        } catch (e){
+          console.error(`ERROR: ${file.name} uploaded failed.`);
+        }
+        callback();
+      });
+      pool.start();
+    }
   } else {
     console.log(`ERROR: ${domain}.w3q doesn't exist`);
   }
