@@ -50,6 +50,7 @@ const FACTORY_ADDRESS = {
 }
 
 let pools;
+let failPool;
 let nonce;
 
 function namehash(inputName) {
@@ -149,7 +150,7 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
         if (txReceipt.status) {
           console.log(`File ${fileName} chunkId: ${index} uploaded!`);
         } else {
-          console.error(`ERROR: transaction failed.`);
+          failPool.push(fileName + "_chunkId:" + index);
         }
       }
     }
@@ -189,7 +190,7 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
       if (txReceipt.status) {
         console.log(`File ${fileName} uploaded!`);
       } else {
-        console.error(`ERROR: transaction failed.`);
+        failPool.push(fileName);
       }
     }
   }
@@ -211,6 +212,7 @@ const deploy = async (path, domain, key, network) => {
     }
 
     pools = [];
+    failPool = [];
     recursiveUpload(path, '');
     const pool = new JTPool(15);
     for(let file of pools){
@@ -218,11 +220,22 @@ const deploy = async (path, domain, key, network) => {
         try {
           await uploadFile(provider, file.path, file.name, file.size, fileContract);
         } catch (e){
-          console.error(`ERROR: ${file.name} uploaded failed.`);
+          failPool.push(file.name);
         }
         callback();
       });
-      pool.start();
+    }
+    pool.start();
+
+    // console error
+    if(failPool.length > 0){
+      console.log("-----------------------------------");
+      console.log("--------------Fail-----------------");
+      console.log("-----------------------------------");
+      for(const file of failPool){
+        console.error(`ERROR: ${file} uploaded failed.`);
+      }
+      console.log("-----------------------------------");
     }
   } else {
     console.log(`ERROR: ${domain}.w3q doesn't exist`);
