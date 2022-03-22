@@ -133,7 +133,7 @@ const uploadFile = (provider, file, fileName, fileSize, fileContract) => {
 
         let cost = 0;
         if (fileSize > 24 * 1024) {
-          cost = fileSize / 1024 / 24;
+          cost = Math.floor((fileSize + 326) / 1024 / 24);
         }
 
         const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
@@ -169,7 +169,7 @@ const uploadFile = (provider, file, fileName, fileSize, fileContract) => {
     } else {
       let cost = 0;
       if (fileSize > 24 * 1024) {
-        cost = fileSize / 1024 / 24;
+        cost = Math.floor((fileSize + 326) / 1024 / 24);
       }
 
       const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
