@@ -98,92 +98,39 @@ async function getWebHandler(domain, network, chainId, provider) {
   return webHandler;
 }
 
-const recursiveUpload = (provider, path, basePath, fileContract) => {
-  fs.readdir(path, (err, files) => {
-    files.forEach(file => {
-      fs.stat(`${path}/${file}`, (err, fileStat) => {
-        if (err) {
-          console.log(err);
-          return;
-        }
-        if (fileStat.isFile()) {
-          uploadFile(provider, `${path}/${file}`, `${basePath}${file}`, fileStat.size, fileContract);
-        }
-        if (fileStat.isDirectory()) {
-          recursiveUpload(provider, `${path}/${file}`, `${basePath}${file}/`, fileContract);
-        }
-      });
-    });
-  });
+const recursiveUpload = async (provider, path, basePath, fileContract) => {
+  const files = fs.readdirSync(path);
+  for (let file of files) {
+    const fileStat = fs.statSync(`${path}/${file}`);
+    if (fileStat.isFile()) {
+      await uploadFile(provider, `${path}/${file}`, `${basePath}${file}`, fileStat.size, fileContract);
+    }
+    if (fileStat.isDirectory()) {
+      await recursiveUpload(provider, `${path}/${file}`, `${basePath}${file}/`, fileContract);
+    }
+  }
 };
 
-const uploadFile = (provider, file, fileName, fileSize, fileContract) => {
-  fs.readFile(file, async function (err, content) {
-    if (err) {
-      console.log(err);
-      return;
-    }
-    // Data need to be sliced if file > 475K
-    if (fileSize > 475 * 1024) {
-      const chunkSize = Math.ceil(fileSize / (475 * 1024));
-      const chunks = bufferChunk(content, chunkSize);
-      fileSize = fileSize / chunkSize;
-      for (const index in chunks) {
-        const chunk = chunks[index];
+const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
+  const content = fs.readFileSync(file);
+  // Data need to be sliced if file > 475K
+  if (fileSize > 475 * 1024) {
+    const chunkSize = Math.ceil(fileSize / (475 * 1024));
+    const chunks = bufferChunk(content, chunkSize);
+    fileSize = fileSize / chunkSize;
+    for (const index in chunks) {
+      const chunk = chunks[index];
 
-        let cost = 0;
-        if (fileSize > 24 * 1024) {
-          cost = fileSize / 1024 / 24;
-        }
-
-        const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
-        const hexData = '0x' + chunk.toString('hex');
-        const [historyData, isFound] = await fileContract.readChunk(hexName, index);
-        if (isFound && hexData === historyData) {
-          console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
-        } else {
-          const options = {
-            nonce: nonce++,
-            gasLimit: 30000000,
-            value: ethers.utils.parseEther(cost.toString())
-          };
-          try {
-            const tx = await fileContract.writeChunk(hexName, index, hexData, options);
-            console.log(`File: ${fileName}, chunkId: ${index}`);
-            console.log(`Transaction Id: ${tx.hash}`);
-            let txReceipt;
-            while (!txReceipt) {
-              txReceipt = await isTransactionMined(provider, tx.hash);
-              await sleep(5000);
-            }
-            if (txReceipt.status) {
-              console.log(`File ${fileName} chunkId: ${index} uploaded!`);
-            } else {
-              console.error(`ERROR: transaction failed.`);
-            }
-          } catch (err) {
-            console.error(err.reason);
-          }
-        }
-      }
-    } else {
       let cost = 0;
       if (fileSize > 24 * 1024) {
         cost = fileSize / 1024 / 24;
       }
 
       const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
-      const hexData = '0x' + content.toString('hex');
-      let [historyData, isFound] = await fileContract.read(hexName);
-      if (hexData !== historyData) {
-        try {
-          historyData = await fileContract.files(hexName); //support old version of FlatDirectory contract
-        } catch (err) {
-          // Doesn't support the files(name) method.
-        }
-      }
-      if (hexData === historyData) {
-        console.log(`${fileName}: The data is not changed.`);
+      const hexData = '0x' + chunk.toString('hex');
+      const [historyData, isFound] = await fileContract.readChunk(hexName, index);
+      if (isFound && hexData === historyData) {
+        console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
       } else {
         const options = {
           nonce: nonce++,
@@ -191,8 +138,8 @@ const uploadFile = (provider, file, fileName, fileSize, fileContract) => {
           value: ethers.utils.parseEther(cost.toString())
         };
         try {
-          const tx = await fileContract.write(hexName, hexData, options);
-          console.log(fileName);
+          const tx = await fileContract.writeChunk(hexName, index, hexData, options);
+          console.log(`File: ${fileName}, chunkId: ${index}`);
           console.log(`Transaction Id: ${tx.hash}`);
           let txReceipt;
           while (!txReceipt) {
@@ -200,7 +147,7 @@ const uploadFile = (provider, file, fileName, fileSize, fileContract) => {
             await sleep(5000);
           }
           if (txReceipt.status) {
-            console.log(`File ${fileName} uploaded!`);
+            console.log(`File ${fileName} chunkId: ${index} uploaded!`);
           } else {
             console.error(`ERROR: transaction failed.`);
           }
@@ -209,7 +156,49 @@ const uploadFile = (provider, file, fileName, fileSize, fileContract) => {
         }
       }
     }
-  });
+  } else {
+    let cost = 0;
+    if (fileSize > 24 * 1024) {
+      cost = fileSize / 1024 / 24;
+    }
+
+    const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
+    const hexData = '0x' + content.toString('hex');
+    let [historyData, isFound] = await fileContract.read(hexName);
+    if (hexData !== historyData) {
+      try {
+        historyData = await fileContract.files(hexName); //support old version of FlatDirectory contract
+      } catch (err) {
+        // Doesn't support the files(name) method.
+      }
+    }
+    if (hexData === historyData) {
+      console.log(`${fileName}: The data is not changed.`);
+    } else {
+      const options = {
+        nonce: nonce++,
+        gasLimit: 30000000,
+        value: ethers.utils.parseEther(cost.toString())
+      };
+      try {
+        const tx = await fileContract.write(hexName, hexData, options);
+        console.log(fileName);
+        console.log(`Transaction Id: ${tx.hash}`);
+        let txReceipt;
+        while (!txReceipt) {
+          txReceipt = await isTransactionMined(provider, tx.hash);
+          await sleep(5000);
+        }
+        if (txReceipt.status) {
+          console.log(`File ${fileName} uploaded!`);
+        } else {
+          console.error(`ERROR: transaction failed.`);
+        }
+      } catch (err) {
+        console.error(err.reason);
+      }
+    }
+  }
 };
 
 const deploy = async (path, domain, key, network) => {
