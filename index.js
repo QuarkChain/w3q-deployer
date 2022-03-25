@@ -156,7 +156,7 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
           console.log(`File ${fileName} chunkId: ${index} uploaded!`);
           totalCost += cost;
           totalFileCount++;
-          totalFileSize += chunkSize / 1024;
+          totalFileSize += fileSize / 1024;
         } else {
           failPool.push(fileName + "_chunkId:" + index);
         }
