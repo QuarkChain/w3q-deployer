@@ -56,9 +56,17 @@ class JTPool {
         this.addTask(task);
     }
 
+    finish(callback){
+        this.finishCallback = callback;
+    }
+
     _notifyComplete() {
         this.current--;
         this._check();
+
+        if (this.finishCallback && this.current === 0) {
+            this.finishCallback();
+        }
     }
 
     _check() {

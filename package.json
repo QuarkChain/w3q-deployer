@@ -13,6 +13,7 @@
   "author": "jishankai",
   "license": "MIT",
   "dependencies": {
+    "colors-cli": "^1.0.28",
     "eth-ens-namehash": "^2.0.8",
     "ethers": "^5.5.4",
     "fs": "^0.0.1-security",
