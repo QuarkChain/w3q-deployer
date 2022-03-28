@@ -4,6 +4,10 @@ const { normalize } = require('eth-ens-namehash');
 const sha3 = require('js-sha3').keccak_256;
 const JTPool = require('./JTPool');
 
+var color = require('colors-cli/safe')
+var error = color.red.bold;
+var notice = color.blue;
+
 const wnsAbi = [
   "function pointerOf(bytes memory name) public view returns (address)",
   "function resolver(bytes32 node) public view returns (address)",
@@ -51,6 +55,7 @@ const FACTORY_ADDRESS = {
 
 let pools;
 let failPool;
+let totalCost, totalFileCount, totalFileSize;
 let nonce;
 
 function namehash(inputName) {
@@ -64,7 +69,7 @@ function namehash(inputName) {
     for (let i = labels.length - 1; i >= 0; i--) {
       let normalisedLabel = normalize(labels[i])
       let labelSha = sha3(normalisedLabel)
-      node = sha3(new Buffer(node + labelSha, 'hex'))
+      node = sha3(Buffer.from(node + labelSha, 'hex'))
     }
   }
 
@@ -149,6 +154,9 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
         }
         if (txReceipt.status) {
           console.log(`File ${fileName} chunkId: ${index} uploaded!`);
+          totalCost += cost;
+          totalFileCount++;
+          totalFileSize += fileSize / 1024;
         } else {
           failPool.push(fileName + "_chunkId:" + index);
         }
@@ -189,6 +197,9 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
       }
       if (txReceipt.status) {
         console.log(`File ${fileName} uploaded!`);
+        totalCost += cost;
+        totalFileCount++;
+        totalFileSize += fileSize / 1024;
       } else {
         failPool.push(fileName);
       }
@@ -207,14 +218,21 @@ const deploy = async (path, domain, key, network) => {
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     const fileStat = fs.statSync(path);
     if (fileStat.isFile()) {
-      await uploadFile(provider, path, path, fileStat.size, fileContract);
+      try {
+        await uploadFile(provider, path, path, fileStat.size, fileContract);
+      } catch (e){
+        console.error(`ERROR: ${path} uploaded failed.`);
+      }
       return;
     }
 
     pools = [];
     failPool = [];
+    totalCost = 0;
+    totalFileCount = 0;
+    totalFileSize = 0;
     recursiveUpload(path, '');
-    const pool = new JTPool(15);
+    const pool = new JTPool(20);
     for(let file of pools){
       pool.addTask(async function (callback) {
         try {
@@ -225,20 +243,25 @@ const deploy = async (path, domain, key, network) => {
         callback();
       });
     }
-    pool.start();
-
-    // console error
-    if(failPool.length > 0){
-      console.log("-----------------------------------");
-      console.log("--------------Fail-----------------");
-      console.log("-----------------------------------");
-      for(const file of failPool){
-        console.error(`ERROR: ${file} uploaded failed.`);
+    pool.finish(function (){
+      // console error
+      if(failPool.length > 0){
+        console.log("-----------------------------------");
+        console.log("--------------Fail-----------------");
+        console.log("-----------------------------------");
+        for(const file of failPool){
+          console.log(error(`ERROR: ${file} uploaded failed.`));
+        }
       }
-      console.log("-----------------------------------");
-    }
+
+      console.log();
+      console.log(notice(`Total Cost: ${totalCost} W3Q.`));
+      console.log(notice(`Total File Count: ${totalFileCount}`));
+      console.log(notice(`Total File Size: ${totalFileSize} KB`));
+    });
+    pool.start();
   } else {
-    console.log(`ERROR: ${domain}.w3q doesn't exist`);
+    console.log(error(`ERROR: ${domain}.w3q doesn't exist`));
   }
 };
 
