@@ -138,13 +138,11 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
       if (isFound && hexData === historyData) {
         console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
       } else {
-        const options = {
+        const tx = await fileContract.writeChunk(hexName, index, hexData, {
           nonce: nonce++,
           gasLimit: 30000000,
           value: ethers.utils.parseEther(cost.toString())
-        };
-
-        const tx = await fileContract.writeChunk(hexName, index, hexData, options);
+        });
         console.log(`File: ${fileName}, chunkId: ${index}`);
         console.log(`Transaction Id: ${tx.hash}`);
         let txReceipt;
@@ -181,13 +179,11 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
     if (hexData === historyData) {
       console.log(`${fileName}: The data is not changed.`);
     } else {
-      const options = {
+      const tx = await fileContract.write(hexName, hexData, {
         nonce: nonce++,
         gasLimit: 30000000,
         value: ethers.utils.parseEther(cost.toString())
-      };
-
-      const tx = await fileContract.write(hexName, hexData, options);
+      });
       console.log(fileName);
       console.log(`Transaction Id: ${tx.hash}`);
       let txReceipt;
@@ -232,7 +228,7 @@ const deploy = async (path, domain, key, network) => {
     totalFileCount = 0;
     totalFileSize = 0;
     recursiveUpload(path, '');
-    const pool = new JTPool(20);
+    const pool = new JTPool(15);
     for(let file of pools){
       pool.addTask(async function (callback) {
         try {
@@ -318,7 +314,6 @@ const refund = async (domain, key, network) => {
   const pointer = await getWebHandler(domain, network, chainId, provider);
 
   if (parseInt(pointer) > 0) {
-    nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     const tx = await fileContract.refund();
     console.log(`Transaction: ${tx.hash}`);
@@ -343,7 +338,6 @@ const setDefault = async (domain, filename, key, network) => {
   const wallet = new ethers.Wallet(key, provider);
   const pointer = await getWebHandler(domain, network, chainId, provider);
   if (parseInt(pointer) > 0) {
-    nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     const defaultFile = '0x' + Buffer.from(filename, 'utf8').toString('hex');
     const tx = await fileContract.setDefault(defaultFile);
