@@ -128,7 +128,7 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
       const chunk = chunks[index];
 
       let cost = 0;
-      if (fileSize > 24 * 1024) {
+      if (fileSize > 24 * 1024 - 326) {
         cost = Math.floor((fileSize + 326) / 1024 / 24);
       }
 
@@ -162,7 +162,7 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
     }
   } else {
     let cost = 0;
-    if (fileSize > 24 * 1024) {
+    if (fileSize > 24 * 1024 - 326) {
       cost = Math.floor((fileSize + 326) / 1024 / 24);
     }
 
