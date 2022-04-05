@@ -1,5 +1,10 @@
 # Web3Q Deployer
 
+## Installation
+```
+npm install w3q-deployer
+```
+
 ## Usage
 
 ## Deploy Command
