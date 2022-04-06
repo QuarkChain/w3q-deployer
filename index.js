@@ -138,9 +138,12 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
       if (isFound && hexData === historyData) {
         console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
       } else {
+        const estimatedGas = await fileContract.estimateGas.writeChunk(hexName, index, hexData, {
+          value: ethers.utils.parseEther(cost.toString())
+        });
         const tx = await fileContract.writeChunk(hexName, index, hexData, {
           nonce: nonce++,
-          gasLimit: 30000000,
+          gasLimit: estimatedGas.mul(6).div(5).toString(),
           value: ethers.utils.parseEther(cost.toString())
         });
         console.log(`File: ${fileName}, chunkId: ${index}`);
@@ -179,9 +182,13 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
     if (hexData === historyData) {
       console.log(`${fileName}: The data is not changed.`);
     } else {
+
+      const estimatedGas = await fileContract.estimateGas.write(hexName, hexData, {
+        value: ethers.utils.parseEther(cost.toString())
+      });
       const tx = await fileContract.write(hexName, hexData, {
         nonce: nonce++,
-        gasLimit: 30000000,
+        gasLimit: estimatedGas.mul(6).div(5).toString(),
         value: ethers.utils.parseEther(cost.toString())
       });
       console.log(fileName);
