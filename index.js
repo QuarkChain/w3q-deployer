@@ -31,25 +31,30 @@ const factoryAbi = [
 
 const MAINNET_NETWORK = "mainnet";
 const TESTNET_NETWORK = "testnet";
+const DEVNET_NETWORK = "devnet";
 const GALILEO_NETWORK = "galileo";
 
 const MAINNET_CHAIN_ID = 333;
 const TESTNET_CHAIN_ID = 3333;
+const DEVNET_CHAIN_ID = 1337;
 const GALILEO_CHAIN_ID = 3334;
 
 const PROVIDER_URLS = {
   [MAINNET_CHAIN_ID]: '',
   [TESTNET_CHAIN_ID]: 'https://testnet.web3q.io:8545',
+  [DEVNET_CHAIN_ID]: 'http://localhost:8545',
   [GALILEO_CHAIN_ID]: 'https://galileo.web3q.io:8545',
 }
 const W3NS_ADDRESS = {
   [MAINNET_CHAIN_ID]: '',
   [TESTNET_CHAIN_ID]: '0x5095135E861845dee965141fEA9061F38C85c699',
+  [DEVNET_CHAIN_ID]: '',
   [GALILEO_CHAIN_ID]: '0xD379B91ac6a93AF106802EB076d16A54E3519CED',
 }
 const FACTORY_ADDRESS = {
   [MAINNET_CHAIN_ID]: '',
   [TESTNET_CHAIN_ID]: '0x7906895532c9Fc4D423f3d5E78672CAd3EB44F91',
+  [DEVNET_CHAIN_ID]: '',
   [GALILEO_CHAIN_ID]: '0x67384A0B6e13CeA90150Bf958F2B13929C429CC5',
 }
 
@@ -82,6 +87,8 @@ function getNetWorkId(network) {
     chainId = MAINNET_CHAIN_ID;
   } else if (network === TESTNET_NETWORK) {
     chainId = TESTNET_CHAIN_ID;
+  } else if (network == DEVNET_NETWORK) {
+    chainId = DEVNET_CHAIN_ID;
   }
   return chainId;
 }
