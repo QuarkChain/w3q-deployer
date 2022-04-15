@@ -22,7 +22,9 @@ const fileAbi = [
   "function readChunk(bytes memory name, uint256 chunkId) public view returns (bytes memory, bool)",
   "function files(bytes memory filename) public view returns (bytes memory)",
   "function setDefault(bytes memory _defaultFile) public",
-  "function refund() public"
+  "function refund() public",
+  "function remove(bytes memory name) external returns (uint256)",
+  "function countChunks(bytes memory name) external view returns (uint256)"
 ];
 const factoryAbi = [
   "event FlatDirectoryCreated(address)",
@@ -125,6 +127,12 @@ const recursiveUpload = (path, basePath) => {
 };
 
 const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
+  const isClear = await clearOldFile(provider, fileName, fileSize, fileContract);
+  if (!isClear) {
+    failPool.push(fileName);
+    return;
+  }
+
   const content = fs.readFileSync(file);
   // Data need to be sliced if file > 475K
   if (fileSize > 475 * 1024) {
@@ -153,7 +161,7 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
           gasLimit: estimatedGas.mul(6).div(5).toString(),
           value: ethers.utils.parseEther(cost.toString())
         });
-        console.log(`File: ${fileName}, chunkId: ${index}`);
+        console.log(`${fileName}, chunkId: ${index}`);
         console.log(`Transaction Id: ${tx.hash}`);
         let txReceipt;
         while (!txReceipt) {
@@ -216,6 +224,40 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
     }
   }
 };
+
+const clearOldFile = async (provider, fileName, fileSize, fileContract) =>{
+  let newChunkSize = 1;
+  if (fileSize > 475 * 1024) {
+    newChunkSize = Math.ceil(fileSize / (475 * 1024));
+  }
+  let oldChunkSize = 0;
+  const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
+  try {
+    oldChunkSize = await fileContract.countChunks(hexName);
+  } catch (err) {
+    // Don't get old size
+    return false;
+  }
+
+  if (oldChunkSize > newChunkSize) {
+    // remove
+    const tx = await fileContract.remove(hexName, {nonce: nonce++});
+    console.log(`Remove file: ${fileName}`);
+    console.log(`Transaction Id: ${tx.hash}`);
+    let txReceipt;
+    while (!txReceipt) {
+      txReceipt = await isTransactionMined(provider, tx.hash);
+      await sleep(5000);
+    }
+    if (txReceipt.status) {
+      console.log(`File ${fileName} removed!`);
+    } else {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 const deploy = async (path, domain, key, network) => {
   const chainId = getNetWorkId(network);
