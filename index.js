@@ -60,6 +60,10 @@ const FACTORY_ADDRESS = {
   [GALILEO_CHAIN_ID]: '0x67384A0B6e13CeA90150Bf958F2B13929C429CC5',
 }
 
+const REMOVE_FAIL = -1;
+const REMOVE_NORMAL = 0;
+const REMOVE_SUCCESS = 1;
+
 let pools;
 let failPool;
 let totalCost, totalFileCount, totalFileSize;
@@ -127,12 +131,13 @@ const recursiveUpload = (path, basePath) => {
 };
 
 const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
-  const isClear = await clearOldFile(provider, fileName, fileSize, fileContract);
-  if (!isClear) {
+  const clearState = await clearOldFile(provider, fileName, fileSize, fileContract);
+  if (clearState === REMOVE_FAIL) {
     failPool.push(fileName);
     return;
   }
 
+  const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
   const content = fs.readFileSync(file);
   // Data need to be sliced if file > 475K
   if (fileSize > 475 * 1024) {
@@ -147,35 +152,38 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
         cost = Math.floor((fileSize + 326) / 1024 / 24);
       }
 
-      const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
       const hexData = '0x' + chunk.toString('hex');
-      const [historyData, isFound] = await fileContract.readChunk(hexName, index);
-      if (isFound && hexData === historyData) {
-        console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
+      if (clearState === REMOVE_NORMAL) {
+        const [historyData, isFound] = await fileContract.readChunk(hexName, index);
+        if (isFound && hexData === historyData) {
+          console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
+          continue;
+        }
+      }
+
+      // file is remove or change
+      const estimatedGas = await fileContract.estimateGas.writeChunk(hexName, index, hexData, {
+        value: ethers.utils.parseEther(cost.toString())
+      });
+      const tx = await fileContract.writeChunk(hexName, index, hexData, {
+        nonce: nonce++,
+        gasLimit: estimatedGas.mul(6).div(5).toString(),
+        value: ethers.utils.parseEther(cost.toString())
+      });
+      console.log(`${fileName}, chunkId: ${index}`);
+      console.log(`Transaction Id: ${tx.hash}`);
+      let txReceipt;
+      while (!txReceipt) {
+        txReceipt = await isTransactionMined(provider, tx.hash);
+        await sleep(5000);
+      }
+      if (txReceipt.status) {
+        console.log(`File ${fileName} chunkId: ${index} uploaded!`);
+        totalCost += cost;
+        totalFileCount++;
+        totalFileSize += fileSize / 1024;
       } else {
-        const estimatedGas = await fileContract.estimateGas.writeChunk(hexName, index, hexData, {
-          value: ethers.utils.parseEther(cost.toString())
-        });
-        const tx = await fileContract.writeChunk(hexName, index, hexData, {
-          nonce: nonce++,
-          gasLimit: estimatedGas.mul(6).div(5).toString(),
-          value: ethers.utils.parseEther(cost.toString())
-        });
-        console.log(`${fileName}, chunkId: ${index}`);
-        console.log(`Transaction Id: ${tx.hash}`);
-        let txReceipt;
-        while (!txReceipt) {
-          txReceipt = await isTransactionMined(provider, tx.hash);
-          await sleep(5000);
-        }
-        if (txReceipt.status) {
-          console.log(`File ${fileName} chunkId: ${index} uploaded!`);
-          totalCost += cost;
-          totalFileCount++;
-          totalFileSize += fileSize / 1024;
-        } else {
-          failPool.push(fileName + "_chunkId:" + index);
-        }
+        failPool.push(fileName + "_chunkId:" + index);
       }
     }
   } else {
@@ -184,43 +192,38 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
       cost = Math.floor((fileSize + 326) / 1024 / 24);
     }
 
-    const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
     const hexData = '0x' + content.toString('hex');
-    let [historyData, isFound] = await fileContract.read(hexName);
-    if (hexData !== historyData) {
-      try {
-        historyData = await fileContract.files(hexName); //support old version of FlatDirectory contract
-      } catch (err) {
-        // Doesn't support the files(name) method.
+    if (clearState === REMOVE_NORMAL) {
+      let [historyData, isFound] = await fileContract.read(hexName);
+      if (hexData === historyData) {
+        console.log(`${fileName}: The data is not changed.`);
+        return;
       }
     }
-    if (hexData === historyData) {
-      console.log(`${fileName}: The data is not changed.`);
-    } else {
 
-      const estimatedGas = await fileContract.estimateGas.write(hexName, hexData, {
-        value: ethers.utils.parseEther(cost.toString())
-      });
-      const tx = await fileContract.write(hexName, hexData, {
-        nonce: nonce++,
-        gasLimit: estimatedGas.mul(6).div(5).toString(),
-        value: ethers.utils.parseEther(cost.toString())
-      });
-      console.log(fileName);
-      console.log(`Transaction Id: ${tx.hash}`);
-      let txReceipt;
-      while (!txReceipt) {
-        txReceipt = await isTransactionMined(provider, tx.hash);
-        await sleep(5000);
-      }
-      if (txReceipt.status) {
-        console.log(`File ${fileName} uploaded!`);
-        totalCost += cost;
-        totalFileCount++;
-        totalFileSize += fileSize / 1024;
-      } else {
-        failPool.push(fileName);
-      }
+    // file is remove or change
+    const estimatedGas = await fileContract.estimateGas.write(hexName, hexData, {
+      value: ethers.utils.parseEther(cost.toString())
+    });
+    const tx = await fileContract.write(hexName, hexData, {
+      nonce: nonce++,
+      gasLimit: estimatedGas.mul(6).div(5).toString(),
+      value: ethers.utils.parseEther(cost.toString())
+    });
+    console.log(fileName);
+    console.log(`Transaction Id: ${tx.hash}`);
+    let txReceipt;
+    while (!txReceipt) {
+      txReceipt = await isTransactionMined(provider, tx.hash);
+      await sleep(5000);
+    }
+    if (txReceipt.status) {
+      console.log(`File ${fileName} uploaded!`);
+      totalCost += cost;
+      totalFileCount++;
+      totalFileSize += fileSize / 1024;
+    } else {
+      failPool.push(fileName);
     }
   }
 };
@@ -236,7 +239,7 @@ const clearOldFile = async (provider, fileName, fileSize, fileContract) =>{
     oldChunkSize = await fileContract.countChunks(hexName);
   } catch (err) {
     // Don't get old size
-    return false;
+    return REMOVE_FAIL;
   }
 
   if (oldChunkSize > newChunkSize) {
@@ -251,12 +254,13 @@ const clearOldFile = async (provider, fileName, fileSize, fileContract) =>{
     }
     if (txReceipt.status) {
       console.log(`File ${fileName} removed!`);
+      return REMOVE_SUCCESS;
     } else {
-      return false;
+      return REMOVE_FAIL;
     }
   }
 
-  return true;
+  return REMOVE_NORMAL;
 }
 
 const deploy = async (path, domain, key, network) => {
