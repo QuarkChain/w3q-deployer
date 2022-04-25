@@ -18,8 +18,10 @@ const resolverAbi = [
 const fileAbi = [
   "function write(bytes memory filename, bytes memory data) public payable",
   "function read(bytes memory name) public view returns (bytes memory, bool)",
+  "function fileChanged(bytes memory name, bytes memory data) public view returns (bool)",
   "function writeChunk(bytes memory name, uint256 chunkId, bytes memory data) public payable",
   "function readChunk(bytes memory name, uint256 chunkId) public view returns (bytes memory, bool)",
+  "function chunkChanged(bytes memory name, uint256 chunkId, bytes memory data) public view returns (bool)",
   "function files(bytes memory filename) public view returns (bytes memory)",
   "function setDefault(bytes memory _defaultFile) public",
   "function refund() public",
@@ -154,8 +156,8 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
 
       const hexData = '0x' + chunk.toString('hex');
       if (clearState === REMOVE_NORMAL) {
-        const [historyData, isFound] = await fileContract.readChunk(hexName, index);
-        if (isFound && hexData === historyData) {
+        const isChange = await fileContract.chunkChanged(hexName, index, hexData);
+        if (!isChange) {
           console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
           continue;
         }
@@ -194,8 +196,8 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
 
     const hexData = '0x' + content.toString('hex');
     if (clearState === REMOVE_NORMAL) {
-      let [historyData, isFound] = await fileContract.read(hexName);
-      if (hexData === historyData) {
+      const isChange = await fileContract.fileChanged(hexName, hexData);
+      if (!isChange) {
         console.log(`${fileName}: The data is not changed.`);
         return;
       }
