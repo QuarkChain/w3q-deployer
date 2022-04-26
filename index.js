@@ -3,6 +3,7 @@ const { ethers } = require("ethers");
 const { normalize } = require('eth-ens-namehash');
 const sha3 = require('js-sha3').keccak_256;
 const JTPool = require('./JTPool');
+const Web3 = require('web3');
 
 var color = require('colors-cli/safe')
 var error = color.red.bold;
@@ -17,15 +18,13 @@ const resolverAbi = [
 ];
 const fileAbi = [
   "function write(bytes memory filename, bytes memory data) public payable",
-  "function read(bytes memory name) public view returns (bytes memory, bool)",
   "function writeChunk(bytes memory name, uint256 chunkId, bytes memory data) public payable",
-  "function readChunk(bytes memory name, uint256 chunkId) public view returns (bytes memory, bool)",
-  "function fileChanged(bytes memory name, uint256 chunkId, bytes32 hash) public view returns (bool)",
   "function files(bytes memory filename) public view returns (bytes memory)",
   "function setDefault(bytes memory _defaultFile) public",
   "function refund() public",
   "function remove(bytes memory name) external returns (uint256)",
-  "function countChunks(bytes memory name) external view returns (uint256)"
+  "function countChunks(bytes memory name) external view returns (uint256)",
+  "function getChunkHash(bytes memory name, uint256 chunkId) public view returns (bytes32)"
 ];
 const factoryAbi = [
   "event FlatDirectoryCreated(address)",
@@ -64,6 +63,13 @@ const FACTORY_ADDRESS = {
 const REMOVE_FAIL = -1;
 const REMOVE_NORMAL = 0;
 const REMOVE_SUCCESS = 1;
+
+const STORAGE_SLOT_CODE1 = "0x6080604052348015600f57600080fd5b506004361060325760003560e01c80632b68b9c61460375780638da5cb5b14603f575b600080fd5b603d6081565b005b60657f000000000000000000000000";
+const STORAGE_SLOT_CODE2 = "81565b6040516001600160a01b03909116815260200160405180910390f35b336001600160a01b037f000000000000000000000000";
+const STORAGE_SLOT_CODE3 = "161460ed5760405162461bcd60e51b815260206004820152600e60248201526d3737ba10333937b69037bbb732b960911b604482015260640160405180910390fd5b33fffea2646970667358221220fc66c9afb7cb2f6209ae28167cf26c6c06f86a82cbe3c56de99027979389a1be64736f6c63430008070033";
+
+let web3;
+let slotHeader;
 
 let pools;
 let failPool;
@@ -155,9 +161,11 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
 
       const hexData = '0x' + chunk.toString('hex');
       if (clearState === REMOVE_NORMAL) {
-        const hash = '0x' + sha3(chunk);
-        const isChange = await fileContract.fileChanged(hexName, index, hash);
-        if (!isChange) {
+        const slotLocalHash = '0x' + sha3(chunk);
+        const contentBytecode = slotHeader + chunk.toString('hex');
+        const localHash = web3.utils.keccak256(contentBytecode);
+        const hash = await fileContract.getChunkHash(hexName, index);
+        if (localHash === hash || slotLocalHash === hash) {
           console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
           continue;
         }
@@ -196,9 +204,11 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
 
     const hexData = '0x' + content.toString('hex');
     if (clearState === REMOVE_NORMAL) {
-      const hash = '0x' + sha3(content);
-      const isChange = await fileContract.fileChanged(hexName, 0, hash);
-      if (!isChange) {
+      const slotLocalHash = '0x' + sha3(content);
+      const contentBytecode = slotHeader + content.toString('hex');
+      const localHash = web3.utils.keccak256(contentBytecode);
+      const hash = await fileContract.getChunkHash(hexName, 0);
+      if (slotLocalHash === hash || localHash === hash) {
         console.log(`${fileName}: The data is not changed.`);
         return;
       }
@@ -273,6 +283,8 @@ const deploy = async (path, domain, key, network) => {
   const pointer = await getWebHandler(domain, network, chainId, provider);
 
   if (parseInt(pointer) > 0) {
+    web3 = new Web3(PROVIDER_URLS[chainId]);
+    slotHeader = STORAGE_SLOT_CODE1 + pointer.toLowerCase().slice(2) + STORAGE_SLOT_CODE2 + pointer.toLowerCase().slice(2) + STORAGE_SLOT_CODE3;
     nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     const fileStat = fs.statSync(path);
