@@ -24,7 +24,8 @@ const fileAbi = [
   "function refund() public",
   "function remove(bytes memory name) external returns (uint256)",
   "function countChunks(bytes memory name) external view returns (uint256)",
-  "function getChunkHash(bytes memory name, uint256 chunkId) public view returns (bytes32)"
+  "function getChunkHash(bytes memory name, uint256 chunkId) public view returns (bytes32)",
+  "function getMetadataHeader() public view returns (bytes memory)"
 ];
 const factoryAbi = [
   "event FlatDirectoryCreated(address)",
@@ -63,10 +64,6 @@ const FACTORY_ADDRESS = {
 const REMOVE_FAIL = -1;
 const REMOVE_NORMAL = 0;
 const REMOVE_SUCCESS = 1;
-
-const STORAGE_SLOT_CODE1 = "0x6080604052348015600f57600080fd5b506004361060325760003560e01c80632b68b9c61460375780638da5cb5b14603f575b600080fd5b603d6081565b005b60657f000000000000000000000000";
-const STORAGE_SLOT_CODE2 = "81565b6040516001600160a01b03909116815260200160405180910390f35b336001600160a01b037f000000000000000000000000";
-const STORAGE_SLOT_CODE3 = "161460ed5760405162461bcd60e51b815260206004820152600e60248201526d3737ba10333937b69037bbb732b960911b604482015260640160405180910390fd5b33fffea2646970667358221220fc66c9afb7cb2f6209ae28167cf26c6c06f86a82cbe3c56de99027979389a1be64736f6c63430008070033";
 
 let web3;
 let slotHeader;
@@ -284,9 +281,9 @@ const deploy = async (path, domain, key, network) => {
 
   if (parseInt(pointer) > 0) {
     web3 = new Web3(PROVIDER_URLS[chainId]);
-    slotHeader = STORAGE_SLOT_CODE1 + pointer.toLowerCase().slice(2) + STORAGE_SLOT_CODE2 + pointer.toLowerCase().slice(2) + STORAGE_SLOT_CODE3;
-    nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
+    slotHeader = await fileContract.getMetadataHeader();
+    nonce = await wallet.getTransactionCount("pending");
     const fileStat = fs.statSync(path);
     if (fileStat.isFile()) {
       try {
