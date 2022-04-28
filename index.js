@@ -3,7 +3,6 @@ const { ethers } = require("ethers");
 const { normalize } = require('eth-ens-namehash');
 const sha3 = require('js-sha3').keccak_256;
 const JTPool = require('./JTPool');
-const Web3 = require('web3');
 
 var color = require('colors-cli/safe')
 var error = color.red.bold;
@@ -24,8 +23,7 @@ const fileAbi = [
   "function refund() public",
   "function remove(bytes memory name) external returns (uint256)",
   "function countChunks(bytes memory name) external view returns (uint256)",
-  "function getChunkHash(bytes memory name, uint256 chunkId) public view returns (bytes32)",
-  "function getMetadataHeader() public view returns (bytes memory)"
+  "function getChunkHash(bytes memory name, uint256 chunkId) public view returns (bytes32)"
 ];
 const factoryAbi = [
   "event FlatDirectoryCreated(address)",
@@ -64,9 +62,6 @@ const FACTORY_ADDRESS = {
 const REMOVE_FAIL = -1;
 const REMOVE_NORMAL = 0;
 const REMOVE_SUCCESS = 1;
-
-let web3;
-let slotHeader;
 
 let pools;
 let failPool;
@@ -158,11 +153,9 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
 
       const hexData = '0x' + chunk.toString('hex');
       if (clearState === REMOVE_NORMAL) {
-        const slotLocalHash = '0x' + sha3(chunk);
-        const contentBytecode = slotHeader + chunk.toString('hex');
-        const localHash = web3.utils.keccak256(contentBytecode);
+        const localHash = '0x' + sha3(chunk);
         const hash = await fileContract.getChunkHash(hexName, index);
-        if (localHash === hash || slotLocalHash === hash) {
+        if (localHash === hash) {
           console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
           continue;
         }
@@ -201,11 +194,9 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
 
     const hexData = '0x' + content.toString('hex');
     if (clearState === REMOVE_NORMAL) {
-      const slotLocalHash = '0x' + sha3(content);
-      const contentBytecode = slotHeader + content.toString('hex');
-      const localHash = web3.utils.keccak256(contentBytecode);
+      const localHash = '0x' + sha3(content);
       const hash = await fileContract.getChunkHash(hexName, 0);
-      if (slotLocalHash === hash || localHash === hash) {
+      if (localHash === hash) {
         console.log(`${fileName}: The data is not changed.`);
         return;
       }
@@ -280,10 +271,8 @@ const deploy = async (path, domain, key, network) => {
   const pointer = await getWebHandler(domain, network, chainId, provider);
 
   if (parseInt(pointer) > 0) {
-    web3 = new Web3(PROVIDER_URLS[chainId]);
-    const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
-    slotHeader = await fileContract.getMetadataHeader();
     nonce = await wallet.getTransactionCount("pending");
+    const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     const fileStat = fs.statSync(path);
     if (fileStat.isFile()) {
       try {
