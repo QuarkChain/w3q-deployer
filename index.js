@@ -17,14 +17,13 @@ const resolverAbi = [
 ];
 const fileAbi = [
   "function write(bytes memory filename, bytes memory data) public payable",
-  "function read(bytes memory name) public view returns (bytes memory, bool)",
   "function writeChunk(bytes memory name, uint256 chunkId, bytes memory data) public payable",
-  "function readChunk(bytes memory name, uint256 chunkId) public view returns (bytes memory, bool)",
   "function files(bytes memory filename) public view returns (bytes memory)",
   "function setDefault(bytes memory _defaultFile) public",
   "function refund() public",
   "function remove(bytes memory name) external returns (uint256)",
-  "function countChunks(bytes memory name) external view returns (uint256)"
+  "function countChunks(bytes memory name) external view returns (uint256)",
+  "function getChunkHash(bytes memory name, uint256 chunkId) public view returns (bytes32)"
 ];
 const factoryAbi = [
   "event FlatDirectoryCreated(address)",
@@ -59,6 +58,10 @@ const FACTORY_ADDRESS = {
   [DEVNET_CHAIN_ID]: '',
   [GALILEO_CHAIN_ID]: '0x67384A0B6e13CeA90150Bf958F2B13929C429CC5',
 }
+
+const REMOVE_FAIL = -1;
+const REMOVE_NORMAL = 0;
+const REMOVE_SUCCESS = 1;
 
 let pools;
 let failPool;
@@ -127,12 +130,13 @@ const recursiveUpload = (path, basePath) => {
 };
 
 const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
-  const isClear = await clearOldFile(provider, fileName, fileSize, fileContract);
-  if (!isClear) {
+  const clearState = await clearOldFile(provider, fileName, fileSize, fileContract);
+  if (clearState === REMOVE_FAIL) {
     failPool.push(fileName);
     return;
   }
 
+  const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
   const content = fs.readFileSync(file);
   // Data need to be sliced if file > 475K
   if (fileSize > 475 * 1024) {
@@ -147,35 +151,39 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
         cost = Math.floor((fileSize + 326) / 1024 / 24);
       }
 
-      const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
       const hexData = '0x' + chunk.toString('hex');
-      const [historyData, isFound] = await fileContract.readChunk(hexName, index);
-      if (isFound && hexData === historyData) {
-        console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
+      if (clearState === REMOVE_NORMAL) {
+        const localHash = '0x' + sha3(chunk);
+        const hash = await fileContract.getChunkHash(hexName, index);
+        if (localHash === hash) {
+          console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
+          continue;
+        }
+      }
+
+      // file is remove or change
+      const estimatedGas = await fileContract.estimateGas.writeChunk(hexName, index, hexData, {
+        value: ethers.utils.parseEther(cost.toString())
+      });
+      const tx = await fileContract.writeChunk(hexName, index, hexData, {
+        nonce: nonce++,
+        gasLimit: estimatedGas.mul(6).div(5).toString(),
+        value: ethers.utils.parseEther(cost.toString())
+      });
+      console.log(`${fileName}, chunkId: ${index}`);
+      console.log(`Transaction Id: ${tx.hash}`);
+      let txReceipt;
+      while (!txReceipt) {
+        txReceipt = await isTransactionMined(provider, tx.hash);
+        await sleep(5000);
+      }
+      if (txReceipt.status) {
+        console.log(`File ${fileName} chunkId: ${index} uploaded!`);
+        totalCost += cost;
+        totalFileCount++;
+        totalFileSize += fileSize / 1024;
       } else {
-        const estimatedGas = await fileContract.estimateGas.writeChunk(hexName, index, hexData, {
-          value: ethers.utils.parseEther(cost.toString())
-        });
-        const tx = await fileContract.writeChunk(hexName, index, hexData, {
-          nonce: nonce++,
-          gasLimit: estimatedGas.mul(6).div(5).toString(),
-          value: ethers.utils.parseEther(cost.toString())
-        });
-        console.log(`${fileName}, chunkId: ${index}`);
-        console.log(`Transaction Id: ${tx.hash}`);
-        let txReceipt;
-        while (!txReceipt) {
-          txReceipt = await isTransactionMined(provider, tx.hash);
-          await sleep(5000);
-        }
-        if (txReceipt.status) {
-          console.log(`File ${fileName} chunkId: ${index} uploaded!`);
-          totalCost += cost;
-          totalFileCount++;
-          totalFileSize += fileSize / 1024;
-        } else {
-          failPool.push(fileName + "_chunkId:" + index);
-        }
+        failPool.push(fileName + "_chunkId:" + index);
       }
     }
   } else {
@@ -184,43 +192,39 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
       cost = Math.floor((fileSize + 326) / 1024 / 24);
     }
 
-    const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
     const hexData = '0x' + content.toString('hex');
-    let [historyData, isFound] = await fileContract.read(hexName);
-    if (hexData !== historyData) {
-      try {
-        historyData = await fileContract.files(hexName); //support old version of FlatDirectory contract
-      } catch (err) {
-        // Doesn't support the files(name) method.
+    if (clearState === REMOVE_NORMAL) {
+      const localHash = '0x' + sha3(content);
+      const hash = await fileContract.getChunkHash(hexName, 0);
+      if (localHash === hash) {
+        console.log(`${fileName}: The data is not changed.`);
+        return;
       }
     }
-    if (hexData === historyData) {
-      console.log(`${fileName}: The data is not changed.`);
-    } else {
 
-      const estimatedGas = await fileContract.estimateGas.write(hexName, hexData, {
-        value: ethers.utils.parseEther(cost.toString())
-      });
-      const tx = await fileContract.write(hexName, hexData, {
-        nonce: nonce++,
-        gasLimit: estimatedGas.mul(6).div(5).toString(),
-        value: ethers.utils.parseEther(cost.toString())
-      });
-      console.log(fileName);
-      console.log(`Transaction Id: ${tx.hash}`);
-      let txReceipt;
-      while (!txReceipt) {
-        txReceipt = await isTransactionMined(provider, tx.hash);
-        await sleep(5000);
-      }
-      if (txReceipt.status) {
-        console.log(`File ${fileName} uploaded!`);
-        totalCost += cost;
-        totalFileCount++;
-        totalFileSize += fileSize / 1024;
-      } else {
-        failPool.push(fileName);
-      }
+    // file is remove or change
+    const estimatedGas = await fileContract.estimateGas.write(hexName, hexData, {
+      value: ethers.utils.parseEther(cost.toString())
+    });
+    const tx = await fileContract.write(hexName, hexData, {
+      nonce: nonce++,
+      gasLimit: estimatedGas.mul(6).div(5).toString(),
+      value: ethers.utils.parseEther(cost.toString())
+    });
+    console.log(fileName);
+    console.log(`Transaction Id: ${tx.hash}`);
+    let txReceipt;
+    while (!txReceipt) {
+      txReceipt = await isTransactionMined(provider, tx.hash);
+      await sleep(5000);
+    }
+    if (txReceipt.status) {
+      console.log(`File ${fileName} uploaded!`);
+      totalCost += cost;
+      totalFileCount++;
+      totalFileSize += fileSize / 1024;
+    } else {
+      failPool.push(fileName);
     }
   }
 };
@@ -236,7 +240,7 @@ const clearOldFile = async (provider, fileName, fileSize, fileContract) =>{
     oldChunkSize = await fileContract.countChunks(hexName);
   } catch (err) {
     // Don't get old size
-    return false;
+    return REMOVE_FAIL;
   }
 
   if (oldChunkSize > newChunkSize) {
@@ -251,12 +255,13 @@ const clearOldFile = async (provider, fileName, fileSize, fileContract) =>{
     }
     if (txReceipt.status) {
       console.log(`File ${fileName} removed!`);
+      return REMOVE_SUCCESS;
     } else {
-      return false;
+      return REMOVE_FAIL;
     }
   }
 
-  return true;
+  return REMOVE_NORMAL;
 }
 
 const deploy = async (path, domain, key, network) => {
@@ -284,7 +289,7 @@ const deploy = async (path, domain, key, network) => {
     totalFileCount = 0;
     totalFileSize = 0;
     recursiveUpload(path, '');
-    const pool = new JTPool(15);
+    const pool = new JTPool(20);
     for(let file of pools){
       pool.addTask(async function (callback) {
         try {
