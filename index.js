@@ -424,7 +424,7 @@ const deploy = async (path, domain, key, network) => {
     });
     pool.start();
   } else {
-    console.log(error(`ERROR: ${domain} doesn't exist`));
+    console.log(error(`ERROR: ${domain} domain doesn't exist`));
   }
 };
 
@@ -470,7 +470,7 @@ const refund = async (domain, key, network) => {
       console.error(`ERROR: transaction failed!`);
     }
   } else {
-    console.log(`ERROR: ${domain} doesn't exist`);
+    console.log(error(`ERROR: ${domain} domain doesn't exist`));
   }
 };
 
@@ -497,7 +497,7 @@ const setDefault = async (domain, filename, key, network) => {
       console.error(`ERROR: transaction failed!`);
     }
   } else {
-    console.log(`ERROR: ${domain} doesn't exist`);
+    console.log(error(`ERROR: ${domain} domain doesn't exist`));
   }
 };
 // **** function ****
