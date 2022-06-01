@@ -14,6 +14,7 @@ const wnsAbi = [
 ];
 const resolverAbi = [
   "function webHandler(bytes32 node) external view returns (address)",
+  "function text(bytes32 node, string calldata key) external view returns (string memory)"
 ];
 const fileAbi = [
   "function write(bytes memory filename, bytes memory data) public payable",
@@ -32,6 +33,8 @@ const factoryAbi = [
 
 const SHORT_NAME_MAINNET = "w3q";
 const SHORT_NAME_GALILEO = "w3q-g";
+const SHORT_NAME_ETHEREUM = "eth";
+const SHORT_NAME_RINKEBY = "rin";
 
 const MAINNET_NETWORK = "mainnet";
 const TESTNET_NETWORK = "testnet";
@@ -42,24 +45,30 @@ const MAINNET_CHAIN_ID = 333;
 const TESTNET_CHAIN_ID = 3333;
 const DEVNET_CHAIN_ID = 1337;
 const GALILEO_CHAIN_ID = 3334;
+const ETHEREUM_CHAIN_ID = 1;
+const RINKEBY_CHAIN_ID = 4;
 
 const PROVIDER_URLS = {
   [MAINNET_CHAIN_ID]: '',
   [TESTNET_CHAIN_ID]: 'https://testnet.web3q.io:8545',
   [DEVNET_CHAIN_ID]: 'http://localhost:8545',
   [GALILEO_CHAIN_ID]: 'https://galileo.web3q.io:8545',
+  [ETHEREUM_CHAIN_ID]: 'https://mainnet.infura.io/v3/75f041536334443e9875f85eff7e3e6f',
+  [RINKEBY_CHAIN_ID]: 'https://rinkeby.infura.io/v3/75f041536334443e9875f85eff7e3e6f',
 }
 const W3NS_ADDRESS = {
   [MAINNET_CHAIN_ID]: '',
   [TESTNET_CHAIN_ID]: '0x5095135E861845dee965141fEA9061F38C85c699',
   [DEVNET_CHAIN_ID]: '',
   [GALILEO_CHAIN_ID]: '0xD379B91ac6a93AF106802EB076d16A54E3519CED',
+  [ETHEREUM_CHAIN_ID]: '0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e',
+  [RINKEBY_CHAIN_ID]: '0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e',
 }
 const FACTORY_ADDRESS = {
   [MAINNET_CHAIN_ID]: '',
   [TESTNET_CHAIN_ID]: '0x7906895532c9Fc4D423f3d5E78672CAd3EB44F91',
   [DEVNET_CHAIN_ID]: '',
-  [GALILEO_CHAIN_ID]: '0x67384A0B6e13CeA90150Bf958F2B13929C429CC5',
+  [GALILEO_CHAIN_ID]: '0x6A89af40f592aCf468c83b29Ee85182f016A9426',
 }
 
 const REMOVE_FAIL = -1;
@@ -71,6 +80,7 @@ let failPool;
 let totalCost, totalFileCount, totalFileSize;
 let nonce;
 
+// **** utils ****
 function namehash(inputName) {
   let node = ''
   for (let i = 0; i < 32; i++) {
@@ -89,7 +99,7 @@ function namehash(inputName) {
   return '0x' + node
 }
 
-function get1155NameAndAddress(domain) {
+function get3770NameAndAddress(domain) {
   if (domain && domain.indexOf(":") !== -1) {
     const result = domain.split(":");
     return {shortName: result[0], address: result[1]};
@@ -99,42 +109,111 @@ function get1155NameAndAddress(domain) {
 
 function getNetWorkIdByShortName(shortName) {
   let chainId = GALILEO_CHAIN_ID;
-  if (shortName === SHORT_NAME_GALILEO) {
-  } else if (shortName === SHORT_NAME_MAINNET) {
-    chainId = MAINNET_CHAIN_ID;
+  switch (shortName) {
+    case SHORT_NAME_MAINNET:
+      chainId = MAINNET_CHAIN_ID;
+      break
+    case SHORT_NAME_GALILEO:
+      chainId = GALILEO_CHAIN_ID;
+      break;
+    case SHORT_NAME_ETHEREUM:
+      chainId = ETHEREUM_CHAIN_ID;
+      break
+    case SHORT_NAME_RINKEBY:
+      chainId = RINKEBY_CHAIN_ID;
+      break;
+  }
+  return chainId;
+}
+
+function getNetWorkIdByDomain(domain) {
+  let chainId = GALILEO_CHAIN_ID;
+  if (domain.endsWith(".eth")) {
+    return ETHEREUM_CHAIN_ID;
+  } else if (domain.endsWith(".w3q")) {
+    chainId = GALILEO_CHAIN_ID;
   }
   return chainId;
 }
 
 function getNetWorkId(network) {
   let chainId = GALILEO_CHAIN_ID;
-  if (network === MAINNET_NETWORK) {
-    chainId = MAINNET_CHAIN_ID;
-  } else if (network === TESTNET_NETWORK) {
-    chainId = TESTNET_CHAIN_ID;
-  } else if (network === DEVNET_NETWORK) {
-    chainId = DEVNET_CHAIN_ID;
+  switch (network) {
+    case MAINNET_NETWORK:
+      chainId = MAINNET_CHAIN_ID;
+      break
+    case GALILEO_NETWORK:
+      chainId = GALILEO_CHAIN_ID;
+      break;
+    case TESTNET_NETWORK:
+      chainId = TESTNET_CHAIN_ID;
+      break
+    case DEVNET_NETWORK:
+      chainId = DEVNET_CHAIN_ID;
+      break;
   }
   return chainId;
 }
 
-async function getWebHandler(domain, network, chainId, provider) {
+async function getWebHandler(domain) {
+  // get web handler address, domain is address, xxx.ens, xxx.w3q
+  let {shortName, address} = get3770NameAndAddress(domain);
+
+  // address
   const ethAddrReg = /^0x[0-9a-fA-F]{40}$/;
-  let webHandler;
-  if (ethAddrReg.test(domain)) {
-    webHandler = domain;
-  } else if (network === TESTNET_NETWORK) {
-    const name = '0x' + Buffer.from(domain, 'utf8').toString('hex');
-    const wnsContract = new ethers.Contract(W3NS_ADDRESS[chainId], wnsAbi, provider);
-    webHandler = await wnsContract.pointerOf(name);
-  } else {
-    const nameHash = namehash(domain + ".w3q");
-    const wnsContract = new ethers.Contract(W3NS_ADDRESS[chainId], wnsAbi, provider);
-    const resolver = await wnsContract.resolver(nameHash);
-    const resolverContract = new ethers.Contract(resolver, resolverAbi, provider);
-    webHandler = await resolverContract.webHandler(nameHash);
+  if (ethAddrReg.test(address)) {
+    return domain;
   }
+
+  // .w3q or .eth
+  const chainId = shortName ? getNetWorkIdByShortName(shortName): getNetWorkIdByDomain(address);
+  const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
+  let webHandler;
+  try {
+    if (chainId === TESTNET_CHAIN_ID) {
+      const name = '0x' + Buffer.from(address, 'utf8').toString('hex');
+      const wnsContract = new ethers.Contract(W3NS_ADDRESS[chainId], wnsAbi, provider);
+      webHandler = await wnsContract.pointerOf(name);
+    } else {
+      const nameHash = namehash(address);
+      const wnsContract = new ethers.Contract(W3NS_ADDRESS[chainId], wnsAbi, provider);
+      const resolver = await wnsContract.resolver(nameHash);
+      const resolverContract = new ethers.Contract(resolver, resolverAbi, provider);
+      if(chainId === ETHEREUM_CHAIN_ID || chainId === RINKEBY_CHAIN_ID){
+        webHandler = await resolverContract.text(nameHash, "w3q");
+      } else {
+        webHandler = await resolverContract.webHandler(nameHash);
+      }
+      let {address} = get3770NameAndAddress(domain);
+      webHandler = address;
+    }
+  } catch (e){}
   return webHandler;
+}
+
+const isTransactionMined = async (provider, transactionHash) => {
+  const txReceipt = await provider.getTransactionReceipt(transactionHash);
+  if (txReceipt && txReceipt.blockNumber) {
+    return txReceipt;
+  }
+}
+
+const sleep = (ms) => {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+const bufferChunk = (buffer, chunkSize) => {
+  let i = 0;
+  let result = [];
+  const len = buffer.length;
+  const chunkLength = Math.ceil(len / chunkSize);
+  while (i < len) {
+    result.push(buffer.slice(i, i += chunkLength));
+  }
+
+  return result;
 }
 
 const recursiveUpload = (path, basePath) => {
@@ -283,15 +362,16 @@ const clearOldFile = async (provider, fileName, fileSize, fileContract) =>{
 
   return REMOVE_NORMAL;
 }
+// **** utils ****
 
+// **** function ****
 const deploy = async (path, domain, key, network) => {
-  const {shortName, address} = get1155NameAndAddress(domain);
-  const chainId = shortName ? getNetWorkIdByShortName(shortName): getNetWorkId(network);
-  const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
-  const wallet = new ethers.Wallet(key, provider);
-  const pointer = await getWebHandler(address, network, chainId, provider);
-
+  const pointer = await getWebHandler(domain);
   if (parseInt(pointer) > 0) {
+    const flatDirectoryChainId = getNetWorkId(network);
+    const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[flatDirectoryChainId]);
+    const wallet = new ethers.Wallet(key, provider);
+
     nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     const fileStat = fs.statSync(path);
@@ -339,34 +419,9 @@ const deploy = async (path, domain, key, network) => {
     });
     pool.start();
   } else {
-    console.log(error(`ERROR: ${domain}.w3q doesn't exist`));
+    console.log(error(`ERROR: ${domain} doesn't exist`));
   }
 };
-
-const isTransactionMined = async (provider, transactionHash) => {
-  const txReceipt = await provider.getTransactionReceipt(transactionHash);
-  if (txReceipt && txReceipt.blockNumber) {
-    return txReceipt;
-  }
-}
-
-const sleep = (ms) => {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-const bufferChunk = (buffer, chunkSize) => {
-  let i = 0;
-  let result = [];
-  const len = buffer.length;
-  const chunkLength = Math.ceil(len / chunkSize);
-  while (i < len) {
-    result.push(buffer.slice(i, i += chunkLength));
-  }
-
-  return result;
-}
 
 const createDirectory = async (key, network) => {
   const chainId = getNetWorkId(network);
@@ -390,13 +445,11 @@ const createDirectory = async (key, network) => {
 };
 
 const refund = async (domain, key, network) => {
-  const {shortName, address} = get1155NameAndAddress(domain);
-  const chainId = shortName ? getNetWorkIdByShortName(shortName): getNetWorkId(network);
-  const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
-  const wallet = new ethers.Wallet(key, provider);
-  const pointer = await getWebHandler(address, network, chainId, provider);
-
+  const pointer = await getWebHandler(domain);
   if (parseInt(pointer) > 0) {
+    const chainId = getNetWorkId(network);
+    const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
+    const wallet = new ethers.Wallet(key, provider);
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     const tx = await fileContract.refund();
     console.log(`Transaction: ${tx.hash}`);
@@ -411,18 +464,17 @@ const refund = async (domain, key, network) => {
       console.error(`ERROR: transaction failed!`);
     }
   } else {
-    console.log(`ERROR: ${domain}.w3q doesn't exist`);
+    console.log(`ERROR: ${domain} doesn't exist`);
   }
 };
 
 const setDefault = async (domain, filename, key, network) => {
-  const {shortName, address} = get1155NameAndAddress(domain);
-  const chainId = shortName ? getNetWorkIdByShortName(shortName): getNetWorkId(network);
-  const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
-  const wallet = new ethers.Wallet(key, provider);
-  const pointer = await getWebHandler(address, network, chainId, provider);
-
+  const pointer = await getWebHandler(domain);
   if (parseInt(pointer) > 0) {
+    const chainId = getNetWorkId(network);
+    const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
+    const wallet = new ethers.Wallet(key, provider);
+
     const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
     const defaultFile = '0x' + Buffer.from(filename, 'utf8').toString('hex');
     const tx = await fileContract.setDefault(defaultFile);
@@ -438,9 +490,10 @@ const setDefault = async (domain, filename, key, network) => {
       console.error(`ERROR: transaction failed!`);
     }
   } else {
-    console.log(`ERROR: ${domain}.w3q doesn't exist`);
+    console.log(`ERROR: ${domain} doesn't exist`);
   }
 };
+// **** function ****
 
 module.exports.deploy = deploy;
 module.exports.create = createDirectory;
