@@ -136,28 +136,34 @@ function getNetWorkIdByDomain(domain) {
   return chainId;
 }
 
-function getNetWorkId(network) {
+function getNetWorkId(network, shortName) {
   let chainId = GALILEO_CHAIN_ID;
-  switch (network) {
-    case MAINNET_NETWORK:
-      chainId = MAINNET_CHAIN_ID;
-      break
-    case GALILEO_NETWORK:
-      chainId = GALILEO_CHAIN_ID;
-      break;
-    case TESTNET_NETWORK:
-      chainId = TESTNET_CHAIN_ID;
-      break
-    case DEVNET_NETWORK:
-      chainId = DEVNET_CHAIN_ID;
-      break;
+  if (shortName) {
+    chainId = getNetWorkIdByShortName(shortName);
+  }
+  if (network) {
+    switch (network) {
+      case MAINNET_NETWORK:
+        chainId = MAINNET_CHAIN_ID;
+        break
+      case GALILEO_NETWORK:
+        chainId = GALILEO_CHAIN_ID;
+        break;
+      case TESTNET_NETWORK:
+        chainId = TESTNET_CHAIN_ID;
+        break
+      case DEVNET_NETWORK:
+        chainId = DEVNET_CHAIN_ID;
+        break;
+    }
   }
   return chainId;
 }
 
+// return address or eip3770 address
 async function getWebHandler(domain) {
   // get web handler address, domain is address, xxx.ens, xxx.w3q
-  let {shortName, address} = get3770NameAndAddress(domain);
+  const {shortName, address} = get3770NameAndAddress(domain);
 
   // address
   const ethAddrReg = /^0x[0-9a-fA-F]{40}$/;
@@ -165,7 +171,7 @@ async function getWebHandler(domain) {
     return domain;
   }
 
-  // .w3q or .eth
+  // .w3q or .eth domain
   const chainId = shortName ? getNetWorkIdByShortName(shortName): getNetWorkIdByDomain(address);
   const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
   let webHandler;
@@ -180,12 +186,10 @@ async function getWebHandler(domain) {
       const resolver = await wnsContract.resolver(nameHash);
       const resolverContract = new ethers.Contract(resolver, resolverAbi, provider);
       if(chainId === ETHEREUM_CHAIN_ID || chainId === RINKEBY_CHAIN_ID){
-        webHandler = await resolverContract.text(nameHash, "w3q");
+        webHandler = await resolverContract.text(nameHash, "web3");
       } else {
         webHandler = await resolverContract.webHandler(nameHash);
       }
-      let {address} = get3770NameAndAddress(domain);
-      webHandler = address;
     }
   } catch (e){}
   return webHandler;
@@ -367,13 +371,14 @@ const clearOldFile = async (provider, fileName, fileSize, fileContract) =>{
 // **** function ****
 const deploy = async (path, domain, key, network) => {
   const pointer = await getWebHandler(domain);
-  if (parseInt(pointer) > 0) {
-    const flatDirectoryChainId = getNetWorkId(network);
-    const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[flatDirectoryChainId]);
+  const {shortName, address} = get3770NameAndAddress(pointer);
+  if (parseInt(address) > 0) {
+    const chainId = getNetWorkId(network, shortName);
+    const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
     const wallet = new ethers.Wallet(key, provider);
 
     nonce = await wallet.getTransactionCount("pending");
-    const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
+    const fileContract = new ethers.Contract(address, fileAbi, wallet);
     const fileStat = fs.statSync(path);
     if (fileStat.isFile()) {
       try {
@@ -446,11 +451,12 @@ const createDirectory = async (key, network) => {
 
 const refund = async (domain, key, network) => {
   const pointer = await getWebHandler(domain);
-  if (parseInt(pointer) > 0) {
-    const chainId = getNetWorkId(network);
+  const {shortName, address} = get3770NameAndAddress(pointer);
+  if (parseInt(address) > 0) {
+    const chainId = getNetWorkId(network, shortName);
     const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
     const wallet = new ethers.Wallet(key, provider);
-    const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
+    const fileContract = new ethers.Contract(address, fileAbi, wallet);
     const tx = await fileContract.refund();
     console.log(`Transaction: ${tx.hash}`);
     let txReceipt;
@@ -470,12 +476,13 @@ const refund = async (domain, key, network) => {
 
 const setDefault = async (domain, filename, key, network) => {
   const pointer = await getWebHandler(domain);
-  if (parseInt(pointer) > 0) {
-    const chainId = getNetWorkId(network);
+  const {shortName, address} = get3770NameAndAddress(pointer);
+  if (parseInt(address) > 0) {
+    const chainId = getNetWorkId(network, shortName);
     const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
     const wallet = new ethers.Wallet(key, provider);
 
-    const fileContract = new ethers.Contract(pointer, fileAbi, wallet);
+    const fileContract = new ethers.Contract(address, fileAbi, wallet);
     const defaultFile = '0x' + Buffer.from(filename, 'utf8').toString('hex');
     const tx = await fileContract.setDefault(defaultFile);
     console.log(`Transaction: ${tx.hash}`);
