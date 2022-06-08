@@ -167,6 +167,11 @@ async function getWebHandler(domain, RPC) {
 
   // .w3q or .eth domain
   const chainId = shortName ? getNetWorkIdByShortName(shortName) : getNetWorkIdByDomain(address);
+  if(!RPC && !PROVIDER_URLS[chainId]) {
+    console.log(error(`RPC ERROR: ${RPC}`));
+    return "";
+  }
+
   const provider = new ethers.providers.JsonRpcProvider(RPC || PROVIDER_URLS[chainId]);
   let webHandler;
   try {
