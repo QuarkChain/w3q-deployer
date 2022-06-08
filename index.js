@@ -37,38 +37,31 @@ const SHORT_NAME_ETHEREUM = "eth";
 const SHORT_NAME_RINKEBY = "rin";
 
 const MAINNET_NETWORK = "mainnet";
-const TESTNET_NETWORK = "testnet";
-const DEVNET_NETWORK = "devnet";
 const GALILEO_NETWORK = "galileo";
+const DEVNET_NETWORK = "devnet";
 
 const MAINNET_CHAIN_ID = 333;
-const TESTNET_CHAIN_ID = 3333;
-const DEVNET_CHAIN_ID = 1337;
 const GALILEO_CHAIN_ID = 3334;
 const ETHEREUM_CHAIN_ID = 1;
 const RINKEBY_CHAIN_ID = 4;
+const DEVNET_CHAIN_ID = 1337;
 
 const PROVIDER_URLS = {
   [MAINNET_CHAIN_ID]: '',
-  [TESTNET_CHAIN_ID]: 'https://testnet.web3q.io:8545',
-  [DEVNET_CHAIN_ID]: 'http://localhost:8545',
   [GALILEO_CHAIN_ID]: 'https://galileo.web3q.io:8545',
-  [ETHEREUM_CHAIN_ID]: 'https://mainnet.infura.io/v3/75f041536334443e9875f85eff7e3e6f',
-  [RINKEBY_CHAIN_ID]: 'https://rinkeby.infura.io/v3/75f041536334443e9875f85eff7e3e6f',
+  [DEVNET_CHAIN_ID]: 'http://localhost:8545',
 }
 const W3NS_ADDRESS = {
   [MAINNET_CHAIN_ID]: '',
-  [TESTNET_CHAIN_ID]: '0x5095135E861845dee965141fEA9061F38C85c699',
-  [DEVNET_CHAIN_ID]: '',
   [GALILEO_CHAIN_ID]: '0xD379B91ac6a93AF106802EB076d16A54E3519CED',
   [ETHEREUM_CHAIN_ID]: '0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e',
   [RINKEBY_CHAIN_ID]: '0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e',
+  [DEVNET_CHAIN_ID]: '',
 }
 const FACTORY_ADDRESS = {
   [MAINNET_CHAIN_ID]: '',
-  [TESTNET_CHAIN_ID]: '0x7906895532c9Fc4D423f3d5E78672CAd3EB44F91',
-  [DEVNET_CHAIN_ID]: '',
   [GALILEO_CHAIN_ID]: '0x1CA0e8be165360296a23907BB482c6640D3aC6ad',
+  [DEVNET_CHAIN_ID]: '',
 }
 
 const REMOVE_FAIL = -1;
@@ -149,9 +142,6 @@ function getNetWorkId(network, shortName) {
       case GALILEO_NETWORK:
         chainId = GALILEO_CHAIN_ID;
         break;
-      case TESTNET_NETWORK:
-        chainId = TESTNET_CHAIN_ID;
-        break
       case DEVNET_NETWORK:
         chainId = DEVNET_CHAIN_ID;
         break;
@@ -161,35 +151,33 @@ function getNetWorkId(network, shortName) {
 }
 
 // return address or eip3770 address
-async function getWebHandler(domain) {
+async function getWebHandler(domain, RPC) {
   // get web handler address, domain is address, xxx.ens, xxx.w3q
   const {shortName, address} = get3770NameAndAddress(domain);
 
   // address
   const ethAddrReg = /^0x[0-9a-fA-F]{40}$/;
   if (ethAddrReg.test(address)) {
+    if (shortName === SHORT_NAME_RINKEBY
+        || shortName === SHORT_NAME_ETHEREUM) {
+      return address;
+    }
     return domain;
   }
 
   // .w3q or .eth domain
-  const chainId = shortName ? getNetWorkIdByShortName(shortName): getNetWorkIdByDomain(address);
-  const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
+  const chainId = shortName ? getNetWorkIdByShortName(shortName) : getNetWorkIdByDomain(address);
+  const provider = new ethers.providers.JsonRpcProvider(RPC || PROVIDER_URLS[chainId]);
   let webHandler;
   try {
-    if (chainId === TESTNET_CHAIN_ID) {
-      const name = '0x' + Buffer.from(address, 'utf8').toString('hex');
-      const wnsContract = new ethers.Contract(W3NS_ADDRESS[chainId], wnsAbi, provider);
-      webHandler = await wnsContract.pointerOf(name);
+    const nameHash = namehash(address);
+    const wnsContract = new ethers.Contract(W3NS_ADDRESS[chainId], wnsAbi, provider);
+    const resolver = await wnsContract.resolver(nameHash);
+    const resolverContract = new ethers.Contract(resolver, resolverAbi, provider);
+    if (chainId === ETHEREUM_CHAIN_ID || chainId === RINKEBY_CHAIN_ID) {
+      webHandler = await resolverContract.text(nameHash, "web3");
     } else {
-      const nameHash = namehash(address);
-      const wnsContract = new ethers.Contract(W3NS_ADDRESS[chainId], wnsAbi, provider);
-      const resolver = await wnsContract.resolver(nameHash);
-      const resolverContract = new ethers.Contract(resolver, resolverAbi, provider);
-      if(chainId === ETHEREUM_CHAIN_ID || chainId === RINKEBY_CHAIN_ID){
-        webHandler = await resolverContract.text(nameHash, "web3");
-      } else {
-        webHandler = await resolverContract.webHandler(nameHash);
-      }
+      webHandler = await resolverContract.webHandler(nameHash);
     }
   } catch (e){}
   return webHandler;
@@ -369,8 +357,8 @@ const clearOldFile = async (provider, fileName, fileSize, fileContract) =>{
 // **** utils ****
 
 // **** function ****
-const deploy = async (path, domain, key, network) => {
-  const pointer = await getWebHandler(domain);
+const deploy = async (path, domain, key, RPC, network) => {
+  const pointer = await getWebHandler(domain, RPC);
   const {shortName, address} = get3770NameAndAddress(pointer);
   if (parseInt(address) > 0) {
     const chainId = getNetWorkId(network, shortName);
@@ -395,7 +383,7 @@ const deploy = async (path, domain, key, network) => {
     totalFileCount = 0;
     totalFileSize = 0;
     recursiveUpload(path, '');
-    const pool = new JTPool(20);
+    const pool = new JTPool(15);
     for(let file of pools){
       pool.addTask(async function (callback) {
         try {
@@ -449,8 +437,8 @@ const createDirectory = async (key, network) => {
   }
 };
 
-const refund = async (domain, key, network) => {
-  const pointer = await getWebHandler(domain);
+const refund = async (domain, key, RPC, network) => {
+  const pointer = await getWebHandler(domain, RPC);
   const {shortName, address} = get3770NameAndAddress(pointer);
   if (parseInt(address) > 0) {
     const chainId = getNetWorkId(network, shortName);
@@ -474,8 +462,8 @@ const refund = async (domain, key, network) => {
   }
 };
 
-const setDefault = async (domain, filename, key, network) => {
-  const pointer = await getWebHandler(domain);
+const setDefault = async (domain, filename, key, RPC, network) => {
+  const pointer = await getWebHandler(domain, RPC);
   const {shortName, address} = get3770NameAndAddress(pointer);
   if (parseInt(address) > 0) {
     const chainId = getNetWorkId(network, shortName);

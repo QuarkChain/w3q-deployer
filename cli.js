@@ -2,7 +2,7 @@
 const args = require('minimist')(
   process.argv.slice(2),
   {
-    string: ['_', 'address', 'privateKey', 'network']
+    string: ['_', 'address', 'privateKey', 'RPC', 'network']
   }
 );
 const { create, refund, deploy, setDefault } = require("./index");
@@ -10,13 +10,13 @@ const { create, refund, deploy, setDefault } = require("./index");
 if (args.create) {
   create(args.privateKey, args.network);
 } else if(args.refund) {
-  refund(args.address, args.privateKey, args.network);
+  refund(args.address, args.privateKey, args.RPC, args.network);
 } else if(args.default) {
-  setDefault(args.address, args.file, args.privateKey, args.network);
+  setDefault(args.address, args.file, args.privateKey, args.RPC, args.network);
 } else {
   if (args.privateKey) {
-    deploy(args._[0], args._[1], args.privateKey, args.network);
+    deploy(args._[0], args._[1], args.privateKey, args.RPC, args.network);
   } else {
-    deploy(args._[0], args._[1], args._[2], args._[3]);
+    deploy(args._[0], args._[1], args._[2], args.RPC, args._[3]);
   }
 }
