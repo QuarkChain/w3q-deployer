@@ -232,7 +232,7 @@ const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
     return;
   }
 
-  const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
+  const hexName = '0x' + Buffer.from(fileName, 'utf8').toString('hex');
   const content = fs.readFileSync(file);
   // Data need to be sliced if file > 475K
   if (fileSize > 475 * 1024) {
@@ -331,7 +331,7 @@ const clearOldFile = async (provider, fileName, fileSize, fileContract) =>{
     newChunkSize = Math.ceil(fileSize / (475 * 1024));
   }
   let oldChunkSize = 0;
-  const hexName = '0x' + Buffer.from(fileName, 'ascii').toString('hex');
+  const hexName = '0x' + Buffer.from(fileName, 'utf8').toString('hex');
   try {
     oldChunkSize = await fileContract.countChunks(hexName);
   } catch (err) {
