@@ -7,7 +7,7 @@ npm install w3q-deployer
 <br/>
 
 ## Usage
-### Support Eip3770 Address
+### Support EIP-3770 Address
 ```
 mainnet 
     w3q:<domain/address>
