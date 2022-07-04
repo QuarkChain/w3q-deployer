@@ -2,11 +2,11 @@ const fs = require('fs');
 const { ethers } = require("ethers");
 const { normalize } = require('eth-ens-namehash');
 const sha3 = require('js-sha3').keccak_256;
-const JTPool = require('./JTPool');
+const { from, mergeMap } = require('rxjs');
 
-var color = require('colors-cli/safe')
-var error = color.red.bold;
-var notice = color.blue;
+const color = require('colors-cli/safe')
+const error = color.red.bold;
+const notice = color.blue;
 
 const wnsAbi = [
   "function pointerOf(bytes memory name) public view returns (address)",
@@ -68,10 +68,11 @@ const REMOVE_FAIL = -1;
 const REMOVE_NORMAL = 0;
 const REMOVE_SUCCESS = 1;
 
-let pools;
-let failPool;
-let totalCost, totalFileCount, totalFileSize;
 let nonce;
+
+const getNonce = () => {
+  return nonce++;
+}
 
 // **** utils ****
 function namehash(inputName) {
@@ -188,6 +189,16 @@ async function getWebHandler(domain, RPC) {
   return webHandler;
 }
 
+const getTxReceipt = async (fileContract, transactionHash) => {
+  const provider = fileContract.provider;
+  let txReceipt;
+  while (!txReceipt) {
+    txReceipt = await isTransactionMined(provider, transactionHash);
+    await sleep(5000);
+  }
+  return txReceipt;
+}
+
 const isTransactionMined = async (provider, transactionHash) => {
   const txReceipt = await provider.getTransactionReceipt(transactionHash);
   if (txReceipt && txReceipt.blockNumber) {
@@ -213,150 +224,150 @@ const bufferChunk = (buffer, chunkSize) => {
   return result;
 }
 
-const recursiveUpload = (path, basePath) => {
+const recursiveFiles = (path, basePath) => {
+  let filePools = [];
   const files = fs.readdirSync(path);
   for (let file of files) {
     const fileStat = fs.statSync(`${path}/${file}`);
     if (fileStat.isDirectory()) {
-      recursiveUpload(`${path}/${file}`, `${basePath}${file}/`);
+      const pools = recursiveFiles(`${path}/${file}`, `${basePath}${file}/`);
+      filePools = filePools.concat(pools);
     } else {
-      pools.push({path: `${path}/${file}`, name: `${basePath}${file}`, size: fileStat.size});
+      filePools.push({path: `${path}/${file}`, name: `${basePath}${file}`, size: fileStat.size});
     }
   }
+  return filePools;
 };
 
-const uploadFile = async (provider, file, fileName, fileSize, fileContract) => {
-  const clearState = await clearOldFile(provider, fileName, fileSize, fileContract);
-  if (clearState === REMOVE_FAIL) {
-    failPool.push(fileName);
-    return;
-  }
+const uploadFile = async (fileContract, fileInfo) => {
+  const {path, name, size} = fileInfo;
+  const filePath = path;
+  const fileName = name;
+  let fileSize = size;
 
   const hexName = '0x' + Buffer.from(fileName, 'utf8').toString('hex');
-  const content = fs.readFileSync(file);
+  const content = fs.readFileSync(filePath);
   // Data need to be sliced if file > 475K
+  let chunks = [];
   if (fileSize > 475 * 1024) {
     const chunkSize = Math.ceil(fileSize / (475 * 1024));
-    const chunks = bufferChunk(content, chunkSize);
+    chunks = bufferChunk(content, chunkSize);
     fileSize = fileSize / chunkSize;
-    for (const index in chunks) {
-      const chunk = chunks[index];
+  } else {
+    chunks.push(content);
+  }
 
-      let cost = 0;
-      if (fileSize > 24 * 1024 - 326) {
-        cost = Math.floor((fileSize + 326) / 1024 / 24);
+  const clearState = await clearOldFile(fileContract, fileName, hexName, chunks.length);
+  if (clearState === REMOVE_FAIL) {
+    return {upload: 0, fileName: fileName};
+  }
+
+  let cost = 0;
+  if (fileSize > 24 * 1024 - 326) {
+    cost = Math.floor((fileSize + 326) / 1024 / 24);
+  }
+
+  let uploadCount = 0;
+  const failFile = [];
+  for (const index in chunks) {
+    const chunk = chunks[index];
+    const hexData = '0x' + chunk.toString('hex');
+
+    if (clearState === REMOVE_NORMAL) {
+      const localHash = '0x' + sha3(chunk);
+      let hash;
+      try {
+        hash = await fileContract.getChunkHash(hexName, index);
+      } catch (e) {
+        await sleep(3000);
+        hash = await fileContract.getChunkHash(hexName, index);
       }
-
-      const hexData = '0x' + chunk.toString('hex');
-      if (clearState === REMOVE_NORMAL) {
-        const localHash = '0x' + sha3(chunk);
-        const hash = await fileContract.getChunkHash(hexName, index);
-        if (localHash === hash) {
-          console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
-          continue;
-        }
+      if (localHash === hash) {
+        console.log(`File ${fileName} chunkId: ${index}: The data is not changed.`);
+        continue;
       }
+    }
 
-      // file is remove or change
+    let gasLimit;
+    try {
       const estimatedGas = await fileContract.estimateGas.writeChunk(hexName, index, hexData, {
         value: ethers.utils.parseEther(cost.toString())
       });
-      const tx = await fileContract.writeChunk(hexName, index, hexData, {
-        nonce: nonce++,
-        gasLimit: estimatedGas.mul(6).div(5).toString(),
-        value: ethers.utils.parseEther(cost.toString())
-      });
-      console.log(`${fileName}, chunkId: ${index}`);
-      console.log(`Transaction Id: ${tx.hash}`);
-      let txReceipt;
-      while (!txReceipt) {
-        txReceipt = await isTransactionMined(provider, tx.hash);
-        await sleep(5000);
-      }
-      if (txReceipt.status) {
-        console.log(`File ${fileName} chunkId: ${index} uploaded!`);
-        totalCost += cost;
-        totalFileCount++;
-        totalFileSize += fileSize / 1024;
-      } else {
-        failPool.push(fileName + "_chunkId:" + index);
-      }
-    }
-  } else {
-    let cost = 0;
-    if (fileSize > 24 * 1024 - 326) {
-      cost = Math.floor((fileSize + 326) / 1024 / 24);
+      gasLimit = estimatedGas.mul(6).div(5).toString();
+    } catch (e) {
+      gasLimit = 20000000;
     }
 
-    const hexData = '0x' + content.toString('hex');
-    if (clearState === REMOVE_NORMAL) {
-      const localHash = '0x' + sha3(content);
-      const hash = await fileContract.getChunkHash(hexName, 0);
-      if (localHash === hash) {
-        console.log(`${fileName}: The data is not changed.`);
-        return;
-      }
-    }
-
-    // file is remove or change
-    const estimatedGas = await fileContract.estimateGas.write(hexName, hexData, {
+    // upload file
+    const option = {
+      nonce: getNonce(),
+      gasLimit: gasLimit,
       value: ethers.utils.parseEther(cost.toString())
-    });
-    const tx = await fileContract.write(hexName, hexData, {
-      nonce: nonce++,
-      gasLimit: estimatedGas.mul(6).div(5).toString(),
-      value: ethers.utils.parseEther(cost.toString())
-    });
-    console.log(fileName);
-    console.log(`Transaction Id: ${tx.hash}`);
-    let txReceipt;
-    while (!txReceipt) {
-      txReceipt = await isTransactionMined(provider, tx.hash);
+    };
+    let tx;
+    try {
+      tx = await fileContract.writeChunk(hexName, index, hexData, option);
+    } catch (e) {
       await sleep(5000);
+      tx = await fileContract.writeChunk(hexName, index, hexData, option);
+    }
+    console.log(`${fileName}, chunkId: ${index}`);
+    console.log(`Transaction Id: ${tx.hash}`);
+
+    // get result
+    let txReceipt;
+    try {
+      txReceipt = await getTxReceipt(fileContract, tx.hash);
+    } catch (e) {
+      await sleep(3000);
+      txReceipt = await getTxReceipt(fileContract, tx.hash);
     }
     if (txReceipt.status) {
-      console.log(`File ${fileName} uploaded!`);
-      totalCost += cost;
-      totalFileCount++;
-      totalFileSize += fileSize / 1024;
+      console.log(`File ${fileName} chunkId: ${index} uploaded!`);
+      uploadCount++;
     } else {
-      failPool.push(fileName);
+      failFile.push(index);
     }
   }
+
+  return {
+    upload: 1,
+    fileName: fileName,
+    cost: cost,
+    fileSize: fileSize / 1024,
+    uploadCount: uploadCount,
+    failFile: failFile
+  };
 };
 
-const clearOldFile = async (provider, fileName, fileSize, fileContract) =>{
-  let newChunkSize = 1;
-  if (fileSize > 475 * 1024) {
-    newChunkSize = Math.ceil(fileSize / (475 * 1024));
-  }
-  let oldChunkSize = 0;
-  const hexName = '0x' + Buffer.from(fileName, 'utf8').toString('hex');
+const clearOldFile = async (fileContract, fileName, hexName, chunkLength) => {
+  let oldChunkLength;
   try {
-    oldChunkSize = await fileContract.countChunks(hexName);
-  } catch (err) {
-    // Don't get old size
-    return REMOVE_FAIL;
+    oldChunkLength = await fileContract.countChunks(hexName);
+  } catch (e) {
+    await sleep(3000);
+    oldChunkLength = await fileContract.countChunks(hexName);
   }
 
-  if (oldChunkSize > newChunkSize) {
+  if (oldChunkLength > chunkLength) {
     // remove
-    const tx = await fileContract.remove(hexName, {nonce: nonce++});
-    console.log(`Remove file: ${fileName}`);
-    console.log(`Transaction Id: ${tx.hash}`);
-    let txReceipt;
-    while (!txReceipt) {
-      txReceipt = await isTransactionMined(provider, tx.hash);
-      await sleep(5000);
+    const option = {nonce: getNonce()};
+    let tx;
+    try {
+      tx = await fileContract.remove(hexName, option);
+    } catch (e) {
+      await sleep(3000);
+      tx = await fileContract.remove(hexName, option);
     }
-    if (txReceipt.status) {
-      console.log(`File ${fileName} removed!`);
+    console.log(`Remove Transaction Id: ${tx.hash}`);
+    const receipt = await getTxReceipt(fileContract, tx.hash);
+    if (receipt.status) {
+      console.log(`Remove file: ${fileName}`);
       return REMOVE_SUCCESS;
     } else {
       return REMOVE_FAIL;
     }
   }
-
   return REMOVE_NORMAL;
 }
 // **** utils ****
@@ -370,52 +381,46 @@ const deploy = async (path, domain, key, RPC, network) => {
     const provider = new ethers.providers.JsonRpcProvider(PROVIDER_URLS[chainId]);
     const wallet = new ethers.Wallet(key, provider);
 
-    nonce = await wallet.getTransactionCount("pending");
     const fileContract = new ethers.Contract(address, fileAbi, wallet);
-    const fileStat = fs.statSync(path);
-    if (fileStat.isFile()) {
-      try {
-        await uploadFile(provider, path, path, fileStat.size, fileContract);
-      } catch (e){
-        console.error(`ERROR: ${path} uploaded failed.`);
-      }
-      return;
-    }
+    nonce = await wallet.getTransactionCount("pending");
 
-    pools = [];
-    failPool = [];
-    totalCost = 0;
-    totalFileCount = 0;
-    totalFileSize = 0;
-    recursiveUpload(path, '');
-    const pool = new JTPool(15);
-    for(let file of pools){
-      pool.addTask(async function (callback) {
-        try {
-          await uploadFile(provider, file.path, file.name, file.size, fileContract);
-        } catch (e){
-          failPool.push(file.name);
-        }
-        callback();
-      });
-    }
-    pool.finish(function (){
-      // console error
-      if(failPool.length > 0){
-        console.log("-----------------------------------");
-        console.log("--------------Fail-----------------");
-        console.log("-----------------------------------");
-        for(const file of failPool){
-          console.log(error(`ERROR: ${file} uploaded failed.`));
-        }
-      }
-
-      console.log();
-      console.log(notice(`Total Cost: ${totalCost} W3Q.`));
-      console.log(notice(`Total File Count: ${totalFileCount}`));
-      console.log(notice(`Total File Size: ${totalFileSize} KB`));
-    });
-    pool.start();
+    let failPool = [];
+    let totalCost = 0, totalFileCount = 0, totalFileSize = 0;
+    // get file and remove old chunk
+    console.log("Stark upload File.......");
+    from(recursiveFiles(path, ''))
+        .pipe(mergeMap(info => uploadFile(fileContract, info), 15))
+        // .returnValue()
+        .subscribe(
+            (info) => {
+              if (info.upload === 1) {
+                if (info.failFile && info.failFile.length > 0) {
+                  for (const index of info.failFile) {
+                    failPool.push(info.fileName + " Chunk:" + index);
+                  }
+                }
+                totalFileCount += info.uploadCount;
+                totalCost += info.uploadCount * info.cost;
+                totalFileSize += info.uploadCount * info.fileSize;
+              } else {
+                failPool.push(info.fileName);
+              }
+            },
+            (error) => {
+              throw error
+            },
+            () => {
+              if (failPool.length > 0) {
+                console.log();
+                for (const file of failPool) {
+                  console.log(error(`ERROR: ${file} uploaded failed.`));
+                }
+              }
+              console.log();
+              console.log(notice(`Total Cost: ${totalCost} W3Q`));
+              console.log(notice(`Total File Count: ${totalFileCount}`));
+              console.log(notice(`Total File Size: ${totalFileSize} KB`));
+            });
   } else {
     console.log(error(`ERROR: ${domain} domain doesn't exist`));
   }
