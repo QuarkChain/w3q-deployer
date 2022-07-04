@@ -288,20 +288,28 @@ const uploadFile = async (fileContract, fileInfo) => {
       }
     }
 
-    let gasLimit;
+    let estimatedGas;
     try {
-      const estimatedGas = await fileContract.estimateGas.writeChunk(hexName, index, hexData, {
+      estimatedGas = await fileContract.estimateGas.writeChunk(hexName, index, hexData, {
         value: ethers.utils.parseEther(cost.toString())
       });
-      gasLimit = estimatedGas.mul(6).div(5).toString();
     } catch (e) {
-      gasLimit = 20000000;
+      await sleep(3000);
+      try {
+        estimatedGas = await fileContract.estimateGas.writeChunk(hexName, index, hexData, {
+          value: ethers.utils.parseEther(cost.toString())
+        });
+      } catch (e) {
+        // transaction is error
+        failFile.push(index);
+        continue;
+      }
     }
 
     // upload file
     const option = {
       nonce: getNonce(),
-      gasLimit: gasLimit,
+      gasLimit: estimatedGas.mul(6).div(5).toString(),
       value: ethers.utils.parseEther(cost.toString())
     };
     let tx;
